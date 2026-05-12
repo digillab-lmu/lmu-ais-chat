@@ -41,7 +41,7 @@ import { OverviewFilter } from '@shared/overview-filter';
 import { generateUUID } from '@shared/utils/uuid';
 import { and, eq } from 'drizzle-orm';
 import z from 'zod';
-import { computeBlobHash } from '@telli/shared-core/crypto/blob-hash';
+import { computeBlobHash } from '@ais-chat/shared-core/crypto/blob-hash';
 import { verifyReadAccess, verifyWriteAccess } from '@shared/auth/authorization-service';
 
 function buildAvatarFilename(hash: string) {

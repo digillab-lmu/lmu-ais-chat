@@ -49,7 +49,7 @@ import { removeNullishValues } from '@shared/utils/remove-nullish-values';
 import { generateUUID } from '@shared/utils/uuid';
 import { and, eq, inArray } from 'drizzle-orm';
 import z from 'zod';
-import { computeBlobHash } from '@telli/shared-core/crypto/blob-hash';
+import { computeBlobHash } from '@ais-chat/shared-core/crypto/blob-hash';
 import {
   requireTeacherRole,
   verifyReadAccess,
