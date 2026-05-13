@@ -34,8 +34,8 @@ import {
 } from '../../../learning-scenarios/editor/[learningScenarioId]/schema';
 import { CustomChatHeading2 } from '@/components/custom-chat/custom-chat-heading2';
 import { CustomChatImageUpload } from '@/components/custom-chat/custom-chat-image-upload';
-import { FieldGroup } from '@ui/components/Field';
-import { Card, CardContent } from '@ui/components/Card';
+import { FieldGroup } from '@ui/components/field';
+import { Card, CardContent } from '@ui/components/card';
 import {
   SMALL_TEXT_INPUT_FIELDS_LIMIT,
   TEXT_INPUT_FIELDS_LENGTH_LIMIT,
@@ -51,7 +51,7 @@ import { useForm, useWatch } from 'react-hook-form';
 import { CustomChatModelSelect } from '@/components/custom-chat/custom-chat-model-select';
 import { CustomChatFilesAndLinks } from '@/components/custom-chat/custom-chat-files-and-links/custom-chat-files-and-links';
 import CustomShareSection from '@/components/custom-chat/custom-chat-share-section';
-import { FormField } from '@ui/components/form/FormField';
+import { FormField } from '@ui/components/form/form-field';
 import { createNewCharacterAction } from '../../actions';
 import { CustomChatInstructionsExampleDialog } from '@/components/custom-chat/custom-chat-instructions-example-dialog';
 import { RichText, stripRichTextTags } from '@/components/common/rich-text';

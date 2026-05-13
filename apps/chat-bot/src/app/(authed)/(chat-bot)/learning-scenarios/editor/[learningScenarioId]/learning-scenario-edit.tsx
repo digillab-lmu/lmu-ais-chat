@@ -8,8 +8,8 @@ import {
 import { zodResolver } from '@hookform/resolvers/zod';
 import { FileModel, LearningScenarioOptionalShareDataModel } from '@shared/db/schema';
 import { BackButton } from '@/components/common/back-button';
-import { Card, CardContent } from '@ui/components/Card';
-import { FieldGroup } from '@ui/components/Field';
+import { Card, CardContent } from '@ui/components/card';
+import { FieldGroup } from '@ui/components/field';
 import { useForm, useWatch } from 'react-hook-form';
 import { useCallback, useMemo, useRef } from 'react';
 import z from 'zod';
@@ -51,7 +51,7 @@ import { tokenPointsPercentageValues, usageTimeValuesInMinutes } from './schema'
 import { CustomChatHeading2 } from '@/components/custom-chat/custom-chat-heading2';
 import { CustomChatInstructionsExampleDialog } from '@/components/custom-chat/custom-chat-instructions-example-dialog';
 import { CustomChatHeaderContent } from '@/components/custom-chat/custom-chat-header-content';
-import { FormField } from '@ui/components/form/FormField';
+import { FormField } from '@ui/components/form/form-field';
 import { RichText, stripRichTextTags } from '@/components/common/rich-text';
 
 type LearningScenarioTranslator = ReturnType<typeof useTranslations<'learning-scenarios'>>;
