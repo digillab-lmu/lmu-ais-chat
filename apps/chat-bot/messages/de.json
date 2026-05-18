@@ -510,6 +510,11 @@
       "button": "Beispiel anzeigen",
       "title": "Instruktionen: Beispielhafter Inhalt",
       "close": "Schließen"
+    },
+    "web-search": {
+      "heading": "Websuche",
+      "heading-tooltip": "Falls aktiviert, sucht AIS.chat automatisch im Internet, sofern aktuelle Informationen nötig sind.",
+      "activated": "Aktiviert"
     }
   },
   "assistants": {
