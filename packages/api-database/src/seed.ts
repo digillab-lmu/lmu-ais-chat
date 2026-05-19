@@ -23,11 +23,48 @@ const gpt4oMiniApiKey = process.env.LLM_GPT4OMINI_API_KEY ?? 'API_KEY_PLACEHOLDE
 const gpt4oMiniBaseUrl = process.env.LLM_GPT4OMINI_BASE_URL ?? 'PLACEHOLDER_BASE_URL';
 const gpt5nanoApiKey = process.env.LLM_GPT5NANO_API_KEY ?? 'API_KEY_PLACEHOLDER';
 const gpt5nanoBaseUrl = process.env.LLM_GPT5NANO_BASE_URL ?? 'PLACEHOLDER_BASE_URL';
+const mockLlmApiKey = process.env.LLM_MOCK_API_KEY ?? 'API_KEY_PLACEHOLDER';
+const mockLlmBaseUrl = process.env.LLM_MOCK_BASE_URL ?? 'PLACEHOLDER_BASE_URL';
+
+// Mock LLM: OpenAI-compatible echo server used as the default model in e2e tests.
+// Echoes the last user message back as a streaming response — no real API calls, fully deterministic.
+// See devops/docker/mock-llm/ for the server implementation.
+const mockLlm: LlmInsertModel = {
+  organizationId: ORGANIZATION_ID,
+  provider: 'openai',
+  name: 'mock-echo',
+  displayName: 'Mock LLM',
+  description: 'Mock LLM for e2e testing — echoes back the received prompt',
+  setting: {
+    provider: 'openai',
+    apiKey: mockLlmApiKey,
+    baseUrl: mockLlmBaseUrl,
+  },
+  priceMetadata: {
+    type: 'text',
+    promptTokenPrice: 0,
+    completionTokenPrice: 0,
+  },
+};
 
 // All prices are rough estimates, probably outdated and just for mocking purposes
 // Static ids are used to ensure that the models are not created again
 // the ids are taken from the staging/production database for interoperability to be able to connect to local AIS.chat api or staging
 const DEFAULT_MODELS: LlmInsertModel[] = [
+  // Mock LLMs
+  {
+    ...mockLlm,
+    id: 'a0a46b60-41d5-4843-856d-c6d8172f0fca',
+    name: 'mock-echo-1',
+    displayName: process.env.E2E_TEXT_MODEL_1 ?? 'Mock LLM',
+  },
+  {
+    ...mockLlm,
+    id: '689342a5-89ed-4d43-bc8c-a1a00f464184',
+    name: 'mock-echo-2',
+    displayName: process.env.E2E_TEXT_MODEL_2 ?? 'Mock LLM (2)',
+  },
+  // Realm LLMs
   {
     id: 'b870b74d-7458-4dcf-99f6-ace83ef514f4',
     organizationId: ORGANIZATION_ID,

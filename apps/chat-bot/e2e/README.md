@@ -3,6 +3,21 @@
 This folder contains test files and utils for running e2e and api tests.
 For e2e tests we use [playwright](https://playwright.dev/).
 
+## Mock LLM
+
+Most e2e tests use a local mock OpenAI-compatible server (`devops/docker/mock-llm/`) as the default
+text model instead of calling real LLMs. The mock server echoes the last user message back as a
+character-by-character SSE stream for deterministic responses.
+
+### Starting the mock LLM locally
+
+Use the local Docker Compose setup which includes the mock server.
+
+### External-services tests
+
+Tests in `tests/external-services/` are intentionally excluded from the mock and always run against real LLMs.
+They are skipped from the chromium/firefox test projects and must be run separately.
+
 ## Run e2e tests
 
 Make sure that there is a `.env.local` file that contains the configuration necessary for the tests to run.
