@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   doublePrecision,
   foreignKey,
   index,
@@ -13,6 +14,7 @@ import {
   unique,
   uuid,
   vector,
+  varchar,
 } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { type DesignConfiguration, type LlmModelPriceMetadata } from './types';
@@ -356,6 +358,22 @@ export const accessLevelSchema = z.enum(['private', 'school', 'global']);
 export const accessLevelEnum = pgEnum('access_level', accessLevelSchema.enum);
 export type AccessLevel = z.infer<typeof accessLevelSchema>;
 
+export const suspensionRequestReasonSchema = z.enum([
+  'copyright_violation',
+  'false_or_outdated_information',
+  'insufficient_sources',
+  'discrimination',
+  'personal_data_usage_or_query',
+  'violence_or_extremist_content',
+  'sexualized_content',
+  'other',
+]);
+export const suspensionRequestReasonEnum = pgEnum(
+  'suspension_request_reason',
+  suspensionRequestReasonSchema.enum,
+);
+export type SuspensionRequestReason = z.infer<typeof suspensionRequestReasonSchema>;
+
 export const characterTable = pgTable(
   'character',
   {
@@ -392,6 +410,7 @@ export const characterTable = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    suspended: boolean('suspended').notNull().default(false),
     isDeleted: boolean('is_deleted').notNull().default(false),
     originalCharacterId: uuid('original_character_id'),
   },
@@ -411,6 +430,7 @@ export const characterInsertSchema = createInsertSchema(characterTable)
     id: true,
     createdAt: true,
     updatedAt: true,
+    suspended: true,
   })
   // for any reason accessLevel has a different type so we have to override it here
   .extend({
@@ -421,6 +441,7 @@ export const characterUpdateSchema = createUpdateSchema(characterTable)
     userId: true,
     createdAt: true,
     updatedAt: true,
+    suspended: true,
   })
   // for any reason accessLevel has a different type so we have to override it here
   .extend({
@@ -594,6 +615,7 @@ export const learningScenarioTable = pgTable(
       .defaultNow()
       .$onUpdateFn(() => new Date())
       .notNull(),
+    suspended: boolean('suspended').notNull().default(false),
     isDeleted: boolean('is_deleted').notNull().default(false),
     accessLevel: accessLevelEnum('access_level').notNull().default('private'),
     originalLearningScenarioId: uuid('original_learning_scenario_id'),
@@ -614,13 +636,14 @@ export const learningScenarioInsertSchema = createInsertSchema(learningScenarioT
   .omit({
     createdAt: true,
     updatedAt: true,
+    suspended: true,
   })
   // for any reason accessLevel has a different type so we have to override it here
   .extend({
     accessLevel: accessLevelSchema,
   });
 export const learningScenarioUpdateSchema = createUpdateSchema(learningScenarioTable)
-  .omit({ userId: true, createdAt: true, updatedAt: true })
+  .omit({ userId: true, createdAt: true, updatedAt: true, suspended: true })
   // for any reason accessLevel has a different type so we have to override it here
   .extend({
     id: z.string(),
@@ -1043,6 +1066,7 @@ export const assistantTable = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    suspended: boolean('suspended').notNull().default(false),
     isDeleted: boolean('is_deleted').notNull().default(false),
     originalAssistantId: uuid('original_assistant_id'),
   },
@@ -1056,7 +1080,7 @@ export const assistantSelectSchema = createSelectSchema(assistantTable).extend({
   ownerSchoolIds: z.array(z.string()),
 });
 export const assistantInsertSchema = createInsertSchema(assistantTable)
-  .omit({ id: true, createdAt: true, updatedAt: true })
+  .omit({ id: true, createdAt: true, updatedAt: true, suspended: true })
   .extend({
     accessLevel: accessLevelSchema,
   });
@@ -1065,6 +1089,7 @@ export const assistantUpdateSchema = createUpdateSchema(assistantTable)
     userId: true,
     createdAt: true,
     updatedAt: true,
+    suspended: true,
   })
   .extend({
     id: z.string(),
@@ -1075,6 +1100,61 @@ export const assistantUpdateSchema = createUpdateSchema(assistantTable)
 export type AssistantSelectModel = z.infer<typeof assistantSelectSchema>;
 export type AssistantInsertModel = z.infer<typeof assistantInsertSchema>;
 export type AssistantUpdateModel = z.infer<typeof assistantUpdateSchema>;
+
+/**
+ * Schema for table suspension_request
+ */
+export const suspensionRequestTable = pgTable(
+  'suspension_request',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    assistantId: uuid('assistant_id').references(() => assistantTable.id, { onDelete: 'cascade' }),
+    characterId: uuid('character_id').references(() => characterTable.id, { onDelete: 'cascade' }),
+    learningScenarioId: uuid('learning_scenario_id').references(() => learningScenarioTable.id, {
+      onDelete: 'cascade',
+    }),
+    requesterId: uuid('requester_id').references(() => userTable.id, {
+      onDelete: 'set null',
+    }),
+    reason: suspensionRequestReasonEnum('reason').notNull(),
+    description: varchar('description', { length: 500 }).notNull(),
+    createdAt: timestamp('created_at', { mode: 'date', withTimezone: true }).defaultNow().notNull(),
+    checked: boolean('checked').notNull().default(false),
+  },
+  (table) => [
+    check(
+      'suspension_request_exactly_one_target_ck',
+      sql`((${table.assistantId} IS NOT NULL)::int + (${table.characterId} IS NOT NULL)::int + (${table.learningScenarioId} IS NOT NULL)::int) = 1`,
+    ),
+    index().on(table.assistantId),
+    index().on(table.characterId),
+    index().on(table.learningScenarioId),
+    index().on(table.createdAt),
+    index().on(table.checked),
+  ],
+);
+
+export const suspensionRequestSelectSchema = createSelectSchema(suspensionRequestTable).extend({
+  createdAt: z.coerce.date(),
+  reason: suspensionRequestReasonSchema,
+});
+
+export const suspensionRequestInsertSchema = createInsertSchema(suspensionRequestTable).omit({
+  id: true,
+  createdAt: true,
+  checked: true,
+});
+
+export const suspensionRequestUpdateSchema = createUpdateSchema(suspensionRequestTable)
+  .omit({ createdAt: true })
+  .extend({
+    id: z.string(),
+    reason: suspensionRequestReasonSchema.optional(),
+  });
+
+export type SuspensionRequestSelectModel = z.infer<typeof suspensionRequestSelectSchema>;
+export type SuspensionRequestInsertModel = z.infer<typeof suspensionRequestInsertSchema>;
+export type SuspensionRequestUpdateModel = z.infer<typeof suspensionRequestUpdateSchema>;
 
 /**
  * Schema for table assistant_template_mappings

@@ -43,6 +43,18 @@ export async function dbGetAssistantById({
   return assistant;
 }
 
+export async function dbGetAssistantsByIds({
+  assistantIds,
+}: {
+  assistantIds: string[];
+}): Promise<AssistantSelectModel[]> {
+  if (assistantIds.length === 0) {
+    return [];
+  }
+
+  return baseAssistantQuery().where(inArray(assistantTable.id, assistantIds));
+}
+
 export async function dbGetGlobalGpts({
   user,
 }: {
@@ -156,20 +168,23 @@ export async function dbUpsertAssistant({
   return dbGetAssistantById({ assistantId: insertedAssistant.id });
 }
 
-export async function dbUpdateAssistant({
+export async function dbSetAssistantSuspended({
   assistantId,
-  assistant,
+  suspended,
 }: {
   assistantId: string;
-  assistant: Partial<AssistantInsertModel>;
-}): Promise<AssistantSelectModel | undefined> {
+  suspended: boolean;
+}) {
   const [updatedAssistant] = await db
     .update(assistantTable)
-    .set(assistant)
+    .set({ suspended })
     .where(eq(assistantTable.id, assistantId))
     .returning();
 
-  if (!updatedAssistant) throw new Error('Could not update assistant');
+  if (!updatedAssistant) {
+    throw new NotFoundError('Assistant not found');
+  }
+
   return dbGetAssistantById({ assistantId: updatedAssistant.id });
 }
 

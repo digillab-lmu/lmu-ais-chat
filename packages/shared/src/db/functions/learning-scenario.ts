@@ -9,11 +9,13 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
+import { NotFoundError } from '@shared/error';
 import { db } from '..';
 import {
   fileTable,
   LearningScenarioFileMapping,
   LearningScenarioOptionalShareDataModel,
+  LearningScenarioSelectModel,
   learningScenarioTable,
   learningScenarioTemplateMappingTable,
   LearningScenarioWithShareDataModel,
@@ -242,6 +244,18 @@ export async function dbGetLearningScenarioById({
   return learningScenario;
 }
 
+export async function dbGetLearningScenariosByIds({
+  learningScenarioIds,
+}: {
+  learningScenarioIds: string[];
+}): Promise<LearningScenarioSelectModel[]> {
+  if (learningScenarioIds.length === 0) {
+    return [];
+  }
+
+  return baseLearningScenarioQuery().where(inArray(learningScenarioTable.id, learningScenarioIds));
+}
+
 /**
  * Needs userId because the metadata for shared learning scenarios is both tied to the user and learning scenario,
  * this is especially important for shared learning scenarios (school wide or global).
@@ -424,4 +438,31 @@ export async function dbCreateLearningScenarioShare({
     })
     .returning();
   return newShare;
+}
+
+export async function dbSetLearningScenarioSuspended({
+  learningScenarioId,
+  suspended,
+}: {
+  learningScenarioId: string;
+  suspended: boolean;
+}) {
+  const [updatedLearningScenario] = await db
+    .update(learningScenarioTable)
+    .set({ suspended })
+    .where(eq(learningScenarioTable.id, learningScenarioId))
+    .returning();
+
+  if (!updatedLearningScenario) {
+    throw new NotFoundError('Learning scenario not found');
+  }
+
+  const learningScenario = await dbGetLearningScenarioById({
+    learningScenarioId: updatedLearningScenario.id,
+  });
+  if (!learningScenario) {
+    throw new NotFoundError('Learning scenario not found');
+  }
+
+  return learningScenario;
 }
