@@ -6,6 +6,7 @@ import {
 } from '@ais-chat/api-database';
 import { CreateLargeLanguageModel, UpdateLargeLanguageModel } from '../types/large-language-model';
 import { logInfo } from '@shared/logging';
+import { dbUpdateLlmModelsForAllFederalStates } from '@shared/db/functions/llm-model';
 
 export async function getLargeLanguageModels(organizationId: string) {
   return dbGetAllModelsByOrganizationId(organizationId);
@@ -63,6 +64,8 @@ export async function updateLargeLanguageModel(
   });
 
   logInfo('LLM was updated successfully', { organizationId, modelId, data });
+
+  await dbUpdateLlmModelsForAllFederalStates();
 
   if (!model) throw new Error('Failed to update model');
   return model;

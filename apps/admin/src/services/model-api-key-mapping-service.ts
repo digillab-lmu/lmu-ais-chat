@@ -3,6 +3,7 @@ import {
   dbUpdateModelMappingsForApiKey,
 } from '@ais-chat/api-database';
 import { logInfo } from '@shared/logging';
+import { dbUpdateLlmModelsForAllFederalStates } from '@shared/db/functions/llm-model';
 
 export async function getModelApiKeyMappings(
   organizationId: string,
@@ -26,6 +27,8 @@ export async function saveModelApiKeyMappings(
   );
 
   logInfo('API Key mapping was updated successfully', { projectId, apiKeyId, modelIds });
+
+  await dbUpdateLlmModelsForAllFederalStates();
 
   return result;
 }
