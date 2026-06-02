@@ -1,6 +1,9 @@
-import { SuspensionRequestOverview } from '@shared/suspension/suspension-service';
+import { assertEntityType, throwEntityInvalidArgumentError } from '@shared/entities/entity-types';
+import { SuspensionRequestEntityOverview } from '@shared/suspension/suspension-service';
 
-export function mapEntityTypeToLabel(entityType: SuspensionRequestOverview['entityType']) {
+export function mapEntityTypeToLabel(entityType: SuspensionRequestEntityOverview['entityType']) {
+  assertEntityType(entityType);
+
   switch (entityType) {
     case 'assistant':
       return 'Assistent';
@@ -9,11 +12,13 @@ export function mapEntityTypeToLabel(entityType: SuspensionRequestOverview['enti
     case 'learningScenario':
       return 'Lernszenario';
     default:
-      return entityType;
+      throwEntityInvalidArgumentError();
   }
 }
 
-export function mapReasonToLabel(reason: SuspensionRequestOverview['reasons'][number]['reason']) {
+export function mapReasonToLabel(
+  reason: SuspensionRequestEntityOverview['reasons'][number]['reason'],
+) {
   switch (reason) {
     case 'copyright_violation':
       return 'Urheberrechtsverletzung';
@@ -36,7 +41,7 @@ export function mapReasonToLabel(reason: SuspensionRequestOverview['reasons'][nu
   }
 }
 
-export function mapStatusToLabel(status: SuspensionRequestOverview['status']) {
+export function mapStatusToLabel(status: SuspensionRequestEntityOverview['status']) {
   switch (status) {
     case 'new':
       return 'neu';
@@ -50,7 +55,7 @@ export function mapStatusToLabel(status: SuspensionRequestOverview['status']) {
 }
 
 export function getChatBotEntityUrl(
-  entityType: SuspensionRequestOverview['entityType'],
+  entityType: SuspensionRequestEntityOverview['entityType'],
   entityId: string,
   host: string,
 ) {
@@ -68,6 +73,8 @@ export function getChatBotEntityUrl(
   })();
 
   const chatBotEntityPath = (() => {
+    assertEntityType(entityType);
+
     switch (entityType) {
       case 'assistant':
         return `/assistants/${entityId}`;
@@ -76,7 +83,7 @@ export function getChatBotEntityUrl(
       case 'learningScenario':
         return `/learning-scenarios/${entityId}`;
       default:
-        return '/';
+        throwEntityInvalidArgumentError();
     }
   })();
 

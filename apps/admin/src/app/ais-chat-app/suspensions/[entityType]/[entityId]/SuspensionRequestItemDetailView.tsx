@@ -9,13 +9,14 @@ import {
   CardAction,
 } from '@ui/components/card';
 import { mapEntityTypeToLabel } from '../../utils';
-import { EntityType, SuspensionRequestOverview } from '@shared/suspension/suspension-service';
+import { SuspensionRequestEntityOverview } from '@shared/suspension/suspension-service';
+import { EntityRef, EntityType } from '@shared/entities/entity-types';
 import { Button } from '@ui/components/button';
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { SuspensionRequestSelectModel } from '@shared/db/schema';
 import Link from 'next/link';
 import {
-  getSuspendedItemWithDetailsAction,
+  getSuspensionRequestItemWithDetailsAction,
   liftSuspensionAction,
   markSuspensionRequestAsCheckedAction,
   suspendEntityAction,
@@ -30,21 +31,22 @@ type SuspendedEntityDetailViewProps = {
   chatBotEntityUrl: string;
 };
 
-export function SuspendedEntityDetailView({
+export function SuspensionRequestItemDetailView({
   entityType,
   entityId,
   chatBotEntityUrl,
 }: SuspendedEntityDetailViewProps) {
-  const [suspendedItemDetails, setSuspendedItemDetails] = useState<SuspensionRequestOverview>();
+  const [suspensionRequestItemDetails, setSuspensionRequestItemDetails] =
+    useState<SuspensionRequestEntityOverview>();
   const [suspensionRequests, setSuspensionRequests] = useState<SuspensionRequestSelectModel[]>([]);
   const [isPending, startTransition] = useTransition();
 
   const loadData = useCallback(async () => {
     startTransition(async () => {
-      const result = await getSuspendedItemWithDetailsAction({ entityType, entityId });
+      const result = await getSuspensionRequestItemWithDetailsAction({ entityType, entityId });
       if (result.success) {
         setSuspensionRequests(result.value.requests);
-        setSuspendedItemDetails(result.value.suspendedItem);
+        setSuspensionRequestItemDetails(result.value.suspendedItem);
       } else {
         toast.error(result.error.message);
       }
@@ -56,7 +58,7 @@ export function SuspendedEntityDetailView({
   }, [loadData]);
 
   function canMarkAsChecked() {
-    return suspendedItemDetails?.status === 'new';
+    return suspensionRequestItemDetails?.status === 'new';
   }
 
   async function handleMarkAsChecked(suspensionRequestId: string) {
@@ -68,25 +70,19 @@ export function SuspendedEntityDetailView({
   }
 
   function canLiftSuspension() {
-    return suspendedItemDetails?.status === 'suspended';
+    return suspensionRequestItemDetails?.status === 'suspended';
   }
 
   async function handleLiftSuspension() {
-    const params = {
-      assistantId:
-        suspendedItemDetails?.entityType === 'assistant'
-          ? suspendedItemDetails?.entityId
-          : undefined,
-      characterId:
-        suspendedItemDetails?.entityType === 'character'
-          ? suspendedItemDetails?.entityId
-          : undefined,
-      learningScenarioId:
-        suspendedItemDetails?.entityType === 'learningScenario'
-          ? suspendedItemDetails?.entityId
-          : undefined,
+    if (!suspensionRequestItemDetails) {
+      return;
+    }
+
+    const entityRef: EntityRef = {
+      entityType: suspensionRequestItemDetails.entityType,
+      entityId: suspensionRequestItemDetails.entityId,
     };
-    const result = await liftSuspensionAction(params);
+    const result = await liftSuspensionAction(entityRef);
     if (!result.success) {
       toast.error(result.error.message);
     }
@@ -94,25 +90,22 @@ export function SuspendedEntityDetailView({
   }
 
   function canSuspendEntity() {
-    return suspendedItemDetails?.status === 'new' || suspendedItemDetails?.status === 'checked';
+    return (
+      suspensionRequestItemDetails?.status === 'new' ||
+      suspensionRequestItemDetails?.status === 'checked'
+    );
   }
 
   async function handleSuspendEntity() {
-    const params = {
-      assistantId:
-        suspendedItemDetails?.entityType === 'assistant'
-          ? suspendedItemDetails?.entityId
-          : undefined,
-      characterId:
-        suspendedItemDetails?.entityType === 'character'
-          ? suspendedItemDetails?.entityId
-          : undefined,
-      learningScenarioId:
-        suspendedItemDetails?.entityType === 'learningScenario'
-          ? suspendedItemDetails?.entityId
-          : undefined,
+    if (!suspensionRequestItemDetails) {
+      return;
+    }
+
+    const entityRef: EntityRef = {
+      entityType: suspensionRequestItemDetails.entityType,
+      entityId: suspensionRequestItemDetails.entityId,
     };
-    const result = await suspendEntityAction(params);
+    const result = await suspendEntityAction(entityRef);
     if (!result.success) {
       toast.error(result.error.message);
     }

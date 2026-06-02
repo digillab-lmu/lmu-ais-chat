@@ -7,39 +7,23 @@ import {
   suspendEntity,
   liftSuspensionOnEntity,
   markSuspensionRequestAsChecked,
-  EntityType,
-  getSuspendedItemWithDetails,
+  getSuspensionRequestItemWithDetails,
 } from '@shared/suspension/suspension-service';
+import { EntityRef } from '@shared/entities/entity-types';
 
-export async function getSuspendedEntitiesAction() {
+export async function getSuspensionRequestEntitiesAction() {
   await requireAdminAuth();
   return runServerAction(getSuspensionRequestOverviews)();
 }
 
-export async function suspendEntityAction({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: {
-  assistantId?: string;
-  characterId?: string;
-  learningScenarioId?: string;
-}) {
+export async function suspendEntityAction(entityRef: EntityRef) {
   await requireAdminAuth();
-  return runServerAction(suspendEntity)({ assistantId, characterId, learningScenarioId });
+  return runServerAction(suspendEntity)(entityRef);
 }
 
-export async function liftSuspensionAction({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: {
-  assistantId?: string;
-  characterId?: string;
-  learningScenarioId?: string;
-}) {
+export async function liftSuspensionAction(entityRef: EntityRef) {
   await requireAdminAuth();
-  return runServerAction(liftSuspensionOnEntity)({ assistantId, characterId, learningScenarioId });
+  return runServerAction(liftSuspensionOnEntity)(entityRef);
 }
 
 export async function markSuspensionRequestAsCheckedAction(suspensionRequestId: string) {
@@ -47,15 +31,12 @@ export async function markSuspensionRequestAsCheckedAction(suspensionRequestId: 
   return runServerAction(markSuspensionRequestAsChecked)(suspensionRequestId);
 }
 
-export async function getSuspendedItemWithDetailsAction({
+export async function getSuspensionRequestItemWithDetailsAction({
   entityType,
   entityId,
-}: {
-  entityType: EntityType;
-  entityId: string;
-}) {
+}: EntityRef) {
   await requireAdminAuth();
-  return runServerAction(getSuspendedItemWithDetails)({
+  return runServerAction(getSuspensionRequestItemWithDetails)({
     entityType,
     entityId,
   });

@@ -1,4 +1,6 @@
-export type TemplateTypes = 'character' | 'assistant' | 'learning-scenario';
+import { URL_ENTITY_TYPES, UrlEntityType } from '@shared/entities/entity-types';
+
+export type TemplateTypes = UrlEntityType;
 
 /* Unified template model for characters and assistants */
 export type TemplateModel = {
@@ -18,9 +20,5 @@ export type TemplateToFederalStateMapping = {
 /**** Guards ****/
 
 export function isTemplateType(templateType: string): templateType is TemplateTypes {
-  return (
-    templateType === 'character' ||
-    templateType === 'assistant' ||
-    templateType === 'learning-scenario'
-  );
+  return (URL_ENTITY_TYPES as readonly string[]).includes(templateType);
 }

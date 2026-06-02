@@ -2,26 +2,23 @@ import { z } from 'zod';
 import { verifyReadAccess } from '@shared/auth/authorization-service';
 import {
   dbGetAssistantById,
-  dbGetAssistantsByIds,
   dbLiftSuspensionOnAssistant,
   dbSetAssistantSuspended,
 } from '@shared/db/functions/assistants';
 import {
   dbGetCharacterById,
-  dbGetCharactersByIds,
   dbLiftSuspensionOnCharacter,
   dbSetCharacterSuspended,
 } from '@shared/db/functions/character';
 import {
   dbGetLearningScenarioById,
-  dbGetLearningScenariosByIds,
   dbLiftSuspensionOnLearningScenario,
   dbSetLearningScenarioSuspended,
 } from '@shared/db/functions/learning-scenario';
 import {
   dbCreateSuspensionRequest,
-  dbGetAllSuspensionRequests,
-  dbGetSuspensionRequestsForEntity,
+  dbGetAllSuspensionRequestsWithEntityDetails,
+  dbGetSuspensionRequestsByEntityRefWithEntityDetails,
   dbMarkSuspensionRequestAsChecked,
 } from '@shared/db/functions/suspension-requests';
 import { dbGetUserById } from '@shared/db/functions/user';
@@ -30,123 +27,88 @@ import {
   suspensionRequestReasonSchema,
   SuspensionRequestSelectModel,
 } from '@shared/db/schema';
+import {
+  EntityRef,
+  EntityType,
+  assertEntityType,
+  throwEntityInvalidArgumentError,
+} from '@shared/entities/entity-types';
 import { InvalidArgumentError, NotFoundError, checkParameterUUID } from '@shared/error';
 
 const suspensionRequestDescriptionSchema = z.string().min(1).max(500);
 
-export type SuspensionRequestTargetIds = {
-  assistantId?: string;
-  characterId?: string;
-  learningScenarioId?: string;
-};
+type SuspensionRequestEntityOverviewStatus = 'new' | 'suspended' | 'checked';
 
-export type EntityType = 'assistant' | 'character' | 'learningScenario';
-
-type SuspensionRequestOverviewStatus = 'new' | 'suspended' | 'checked';
-
-export type SuspensionRequestOverview = {
+export type SuspensionRequestEntityOverview = {
   entityType: EntityType;
   entityId: string;
   entityName: string;
   requestCount: number;
-  status: SuspensionRequestOverviewStatus;
+  status: SuspensionRequestEntityOverviewStatus;
   latestRequestAt: Date;
   reasons: { id: string; reason: SuspensionRequestReason }[];
 };
 
-type SuspensionRequest = Awaited<ReturnType<typeof dbGetAllSuspensionRequests>>[number];
-
-type SuspensionRequestGroup = {
-  entityType: EntityType;
-  entityId: string;
-  suspensionRequests: SuspensionRequest[];
-};
-
-type SuspensionRequestEntityIds = {
-  assistantIds: string[];
-  characterIds: string[];
-  learningScenarioIds: string[];
-};
-
-type SuspensionRequestEntitySummary = {
-  entityType: EntityType;
-  entityId: string;
-  entityName: string;
-  suspended: boolean;
-};
-
-type SuspensionRequestEntityLookup = {
-  assistantsById: Map<string, SuspensionRequestEntitySummary>;
-  charactersById: Map<string, SuspensionRequestEntitySummary>;
-  learningScenariosById: Map<string, SuspensionRequestEntitySummary>;
-};
+type SuspensionRequest = Awaited<
+  ReturnType<typeof dbGetAllSuspensionRequestsWithEntityDetails>
+>[number];
 
 type SuspensionRequestAggregate = Pick<
-  SuspensionRequestOverview,
+  SuspensionRequestEntityOverview,
   'requestCount' | 'latestRequestAt' | 'reasons'
 > & {
   hasUncheckedRequests: boolean;
 };
 
-function validateSingleTargetAndUuid({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: SuspensionRequestTargetIds) {
-  const providedIds = [assistantId, characterId, learningScenarioId].filter(
-    (id): id is string => id !== undefined,
-  );
+/**
+ * Resolves the referenced entity from the given entity type and id.
+ * Throws when the id is invalid, the entity type is unsupported, or the entity does not exist.
+ */
+async function resolveTargetEntity({ entityType, entityId }: EntityRef) {
+  assertEntityType(entityType);
+  checkParameterUUID(entityId);
 
-  if (providedIds.length !== 1) {
-    throw new InvalidArgumentError('Exactly one target entity id must be provided');
-  }
-
-  checkParameterUUID(...providedIds);
-}
-
-async function resolveTargetEntity({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: SuspensionRequestTargetIds) {
-  if (assistantId) {
-    return dbGetAssistantById({ assistantId });
-  }
-
-  if (characterId) {
-    const character = await dbGetCharacterById({ characterId });
-    if (!character) {
-      throw new NotFoundError('Character not found');
+  switch (entityType) {
+    case 'assistant': {
+      const assistant = await dbGetAssistantById({ assistantId: entityId });
+      if (!assistant) {
+        throw new NotFoundError('Assistant not found');
+      }
+      return assistant;
     }
 
-    return character;
-  }
-
-  if (learningScenarioId) {
-    const learningScenario = await dbGetLearningScenarioById({ learningScenarioId });
-    if (!learningScenario) {
-      throw new NotFoundError('Learning scenario not found');
+    case 'character': {
+      const character = await dbGetCharacterById({ characterId: entityId });
+      if (!character) {
+        throw new NotFoundError('Character not found');
+      }
+      return character;
     }
 
-    return learningScenario;
-  }
+    case 'learningScenario': {
+      const learningScenario = await dbGetLearningScenarioById({ learningScenarioId: entityId });
+      if (!learningScenario) {
+        throw new NotFoundError('Learning scenario not found');
+      }
+      return learningScenario;
+    }
 
-  throw new InvalidArgumentError('Exactly one target entity id must be provided');
+    default:
+      throwEntityInvalidArgumentError();
+  }
 }
 
 export async function createSuspensionRequest({
-  assistantId,
-  characterId,
-  learningScenarioId,
+  entityType,
+  entityId,
   requesterId,
   reason,
   description,
-}: SuspensionRequestTargetIds & {
+}: EntityRef & {
   requesterId: string;
   reason: string;
   description: string;
 }) {
-  validateSingleTargetAndUuid({ assistantId, characterId, learningScenarioId });
   checkParameterUUID(requesterId);
 
   const validatedReason = suspensionRequestReasonSchema.parse(reason);
@@ -157,7 +119,7 @@ export async function createSuspensionRequest({
     throw new NotFoundError('Requester not found');
   }
 
-  const targetEntity = await resolveTargetEntity({ assistantId, characterId, learningScenarioId });
+  const targetEntity = await resolveTargetEntity({ entityType, entityId });
   verifyReadAccess({
     item: targetEntity,
     user: requester,
@@ -165,9 +127,9 @@ export async function createSuspensionRequest({
 
   return dbCreateSuspensionRequest({
     suspensionRequest: {
-      assistantId,
-      characterId,
-      learningScenarioId,
+      assistantId: entityType === 'assistant' ? entityId : undefined,
+      characterId: entityType === 'character' ? entityId : undefined,
+      learningScenarioId: entityType === 'learningScenario' ? entityId : undefined,
       requesterId,
       reason: validatedReason,
       description: validatedDescription,
@@ -180,177 +142,65 @@ export async function markSuspensionRequestAsChecked(suspensionRequestId: string
   return dbMarkSuspensionRequestAsChecked({ suspensionRequestId });
 }
 
-export async function suspendEntity({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: SuspensionRequestTargetIds) {
-  validateSingleTargetAndUuid({ assistantId, characterId, learningScenarioId });
-
-  if (assistantId) {
-    return dbSetAssistantSuspended({ assistantId });
+export async function suspendEntity(entityRef: EntityRef) {
+  const { entityType, entityId } = entityRef;
+  assertEntityType(entityType);
+  checkParameterUUID(entityId);
+  switch (entityType) {
+    case 'assistant':
+      return dbSetAssistantSuspended({ assistantId: entityId });
+    case 'character':
+      return dbSetCharacterSuspended({ characterId: entityId });
+    case 'learningScenario':
+      return dbSetLearningScenarioSuspended({ learningScenarioId: entityId });
+    default:
+      throwEntityInvalidArgumentError();
   }
-
-  if (characterId) {
-    return dbSetCharacterSuspended({ characterId });
-  }
-
-  if (learningScenarioId) {
-    return dbSetLearningScenarioSuspended({ learningScenarioId });
-  }
-
-  throw new InvalidArgumentError('Exactly one target entity id must be provided');
 }
 
-export async function liftSuspensionOnEntity({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: SuspensionRequestTargetIds) {
-  validateSingleTargetAndUuid({ assistantId, characterId, learningScenarioId });
-
-  if (assistantId) {
-    return dbLiftSuspensionOnAssistant({ assistantId });
+export async function liftSuspensionOnEntity(entityRef: EntityRef) {
+  const { entityType, entityId } = entityRef;
+  assertEntityType(entityType);
+  checkParameterUUID(entityId);
+  switch (entityType) {
+    case 'assistant':
+      return dbLiftSuspensionOnAssistant({ assistantId: entityId });
+    case 'character':
+      return dbLiftSuspensionOnCharacter({ characterId: entityId });
+    case 'learningScenario':
+      return dbLiftSuspensionOnLearningScenario({ learningScenarioId: entityId });
+    default:
+      throwEntityInvalidArgumentError();
   }
-
-  if (characterId) {
-    return dbLiftSuspensionOnCharacter({ characterId });
-  }
-
-  if (learningScenarioId) {
-    return dbLiftSuspensionOnLearningScenario({ learningScenarioId });
-  }
-
-  throw new InvalidArgumentError('Exactly one target entity id must be provided');
 }
 
-function getSuspensionRequestTarget(
-  suspensionRequest: SuspensionRequest,
-): Pick<SuspensionRequestGroup, 'entityType' | 'entityId'> {
-  if (suspensionRequest.assistantId) {
-    return {
-      entityType: 'assistant',
-      entityId: suspensionRequest.assistantId,
-    };
-  }
-
-  if (suspensionRequest.characterId) {
-    return {
-      entityType: 'character',
-      entityId: suspensionRequest.characterId,
-    };
-  }
-
-  if (suspensionRequest.learningScenarioId) {
-    return {
-      entityType: 'learningScenario',
-      entityId: suspensionRequest.learningScenarioId,
-    };
-  }
-
-  throw new InvalidArgumentError('Invalid suspension request target grouping');
-}
-
-function groupSuspensionRequestsByEntity(
-  suspensionRequests: SuspensionRequest[],
-): SuspensionRequestGroup[] {
-  const groupedSuspensionRequests = {
-    assistant: new Map<string, SuspensionRequest[]>(),
-    character: new Map<string, SuspensionRequest[]>(),
-    learningScenario: new Map<string, SuspensionRequest[]>(),
-  } satisfies Record<EntityType, Map<string, SuspensionRequest[]>>;
+function groupSuspensionRequestsByEntity(suspensionRequests: SuspensionRequest[]): Array<{
+  entityType: EntityType;
+  entityId: string;
+  suspensionRequests: SuspensionRequest[];
+}> {
+  const groupedSuspensionRequests = new Map<string, SuspensionRequest[]>();
 
   for (const suspensionRequest of suspensionRequests) {
-    const { entityType, entityId } = getSuspensionRequestTarget(suspensionRequest);
-    const suspensionRequestsForEntity = groupedSuspensionRequests[entityType].get(entityId) ?? [];
-
-    suspensionRequestsForEntity.push(suspensionRequest);
-    groupedSuspensionRequests[entityType].set(entityId, suspensionRequestsForEntity);
+    const groupKey = `${suspensionRequest.entityType}:${suspensionRequest.entityId}`;
+    const existingRequests = groupedSuspensionRequests.get(groupKey) ?? [];
+    existingRequests.push(suspensionRequest);
+    groupedSuspensionRequests.set(groupKey, existingRequests);
   }
 
-  return Object.entries(groupedSuspensionRequests).flatMap(([entityType, requestsById]) =>
-    Array.from(requestsById.entries()).map(([entityId, groupedRequests]) => ({
+  return Array.from(groupedSuspensionRequests.entries()).map(([groupKey, groupedRequests]) => {
+    const [entityType, entityId] = groupKey.split(':');
+
+    if (!entityType || !entityId) {
+      throw new InvalidArgumentError('Invalid suspension request target grouping');
+    }
+
+    return {
       entityType: entityType as EntityType,
       entityId,
       suspensionRequests: groupedRequests,
-    })),
-  );
-}
-
-function collectSuspensionRequestEntityIds(
-  groupedSuspensionRequests: SuspensionRequestGroup[],
-): SuspensionRequestEntityIds {
-  const assistantIds = new Set<string>();
-  const characterIds = new Set<string>();
-  const learningScenarioIds = new Set<string>();
-
-  for (const { entityType, entityId } of groupedSuspensionRequests) {
-    if (entityType === 'assistant') {
-      assistantIds.add(entityId);
-      continue;
-    }
-
-    if (entityType === 'character') {
-      characterIds.add(entityId);
-      continue;
-    }
-
-    learningScenarioIds.add(entityId);
-  }
-
-  return {
-    assistantIds: [...assistantIds],
-    characterIds: [...characterIds],
-    learningScenarioIds: [...learningScenarioIds],
-  };
-}
-
-async function loadSuspensionRequestEntityLookup({
-  assistantIds,
-  characterIds,
-  learningScenarioIds,
-}: SuspensionRequestEntityIds): Promise<SuspensionRequestEntityLookup> {
-  const [assistants, characters, learningScenarios] = await Promise.all([
-    dbGetAssistantsByIds({ assistantIds }),
-    dbGetCharactersByIds({ characterIds }),
-    dbGetLearningScenariosByIds({ learningScenarioIds }),
-  ]);
-
-  return {
-    assistantsById: new Map(
-      assistants.map((assistant) => [
-        assistant.id,
-        {
-          entityType: 'assistant' as const,
-          entityId: assistant.id,
-          entityName: assistant.name,
-          suspended: assistant.suspended,
-        },
-      ]),
-    ),
-    charactersById: new Map(
-      characters.map((character) => [
-        character.id,
-        {
-          entityType: 'character' as const,
-          entityId: character.id,
-          entityName: character.name,
-          suspended: character.suspended,
-        },
-      ]),
-    ),
-    learningScenariosById: new Map(
-      learningScenarios.map((learningScenario) => [
-        learningScenario.id,
-        {
-          entityType: 'learningScenario' as const,
-          entityId: learningScenario.id,
-          entityName: learningScenario.name,
-          suspended: learningScenario.suspended,
-        },
-      ]),
-    ),
-  };
+    };
+  });
 }
 
 function getSuspensionRequestAggregate(
@@ -377,48 +227,37 @@ function getSuspensionRequestAggregate(
   };
 }
 
-function getSuspensionRequestEntitySummary(
-  groupedSuspensionRequest: SuspensionRequestGroup,
-  entityLookup: SuspensionRequestEntityLookup,
-): SuspensionRequestEntitySummary {
-  if (groupedSuspensionRequest.entityType === 'assistant') {
-    const assistant = entityLookup.assistantsById.get(groupedSuspensionRequest.entityId);
-    if (!assistant) {
+function throwNotFoundForEntity(entityType: EntityType): never {
+  assertEntityType(entityType);
+
+  switch (entityType) {
+    case 'assistant':
       throw new NotFoundError('Assistant not found');
-    }
-
-    return assistant;
-  }
-
-  if (groupedSuspensionRequest.entityType === 'character') {
-    const character = entityLookup.charactersById.get(groupedSuspensionRequest.entityId);
-    if (!character) {
+    case 'character':
       throw new NotFoundError('Character not found');
-    }
-
-    return character;
+    case 'learningScenario':
+      throw new NotFoundError('Learning scenario not found');
+    default:
+      throwEntityInvalidArgumentError();
   }
-
-  const learningScenario = entityLookup.learningScenariosById.get(
-    groupedSuspensionRequest.entityId,
-  );
-  if (!learningScenario) {
-    throw new NotFoundError('Learning scenario not found');
-  }
-
-  return learningScenario;
 }
 
-function buildSuspensionRequestOverview(
-  groupedSuspensionRequest: SuspensionRequestGroup,
-  entityLookup: SuspensionRequestEntityLookup,
-): SuspensionRequestOverview {
-  const entity = getSuspensionRequestEntitySummary(groupedSuspensionRequest, entityLookup);
+function buildSuspensionRequestEntityOverview(groupedSuspensionRequest: {
+  entityType: EntityType;
+  entityId: string;
+  suspensionRequests: SuspensionRequest[];
+}): SuspensionRequestEntityOverview {
+  const entity = groupedSuspensionRequest.suspensionRequests[0];
+
+  if (!entity || !entity.entityName || entity.suspended === null) {
+    throwNotFoundForEntity(groupedSuspensionRequest.entityType);
+  }
+
   const aggregate = getSuspensionRequestAggregate(groupedSuspensionRequest.suspensionRequests);
 
   return {
-    entityType: entity.entityType,
-    entityId: entity.entityId,
+    entityType: groupedSuspensionRequest.entityType,
+    entityId: groupedSuspensionRequest.entityId,
     entityName: entity.entityName,
     requestCount: aggregate.requestCount,
     status: entity.suspended ? 'suspended' : aggregate.hasUncheckedRequests ? 'new' : 'checked',
@@ -427,15 +266,13 @@ function buildSuspensionRequestOverview(
   };
 }
 
-export async function getSuspensionRequestOverviews(): Promise<SuspensionRequestOverview[]> {
-  const allSuspensionRequests = await dbGetAllSuspensionRequests();
+export async function getSuspensionRequestOverviews(): Promise<SuspensionRequestEntityOverview[]> {
+  const allSuspensionRequests = await dbGetAllSuspensionRequestsWithEntityDetails();
 
   const groupedSuspensionRequests = groupSuspensionRequestsByEntity(allSuspensionRequests);
-  const groupedEntityIds = collectSuspensionRequestEntityIds(groupedSuspensionRequests);
-  const entityLookup = await loadSuspensionRequestEntityLookup(groupedEntityIds);
 
   const overviewItems = groupedSuspensionRequests.map((groupedSuspensionRequest) =>
-    buildSuspensionRequestOverview(groupedSuspensionRequest, entityLookup),
+    buildSuspensionRequestEntityOverview(groupedSuspensionRequest),
   );
 
   const sorted = overviewItems.sort(
@@ -445,80 +282,33 @@ export async function getSuspensionRequestOverviews(): Promise<SuspensionRequest
   return sorted;
 }
 
-export async function getSuspensionRequestsForEntity({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: SuspensionRequestTargetIds): Promise<SuspensionRequestSelectModel[]> {
-  validateSingleTargetAndUuid({ assistantId, characterId, learningScenarioId });
-  return dbGetSuspensionRequestsForEntity({ assistantId, characterId, learningScenarioId });
-}
-
 /**
- * Retrieves an entity that was reported by an user along with all the suspension requests.
- * The entity is identified by the combination of the entity type and entity id.
- * This is used to display the details of a reported entity in the admin interface.
- * @param entityType The type of the entity (assistant, character or learning scenario)
+ * Retrieves an entity overview together with all related suspension requests.
+ * The entity is identified by the combination of entity type and entity id.
+ * This is used to display the detailed view in the admin interface.
+ * @param entityType The type of the entity (assistant, character, or learning scenario)
  * @param entityId The id of the entity
- * @returns The details of the reported entity along with all its suspension requests
+ * @returns The detailed suspension request entity overview and related suspension requests
  */
-export async function getSuspendedItemWithDetails({
+export async function getSuspensionRequestItemWithDetails({
   entityType,
   entityId,
-}: {
-  entityType: EntityType;
-  entityId: string;
-}): Promise<{
-  suspendedItem: SuspensionRequestOverview;
+}: EntityRef): Promise<{
+  suspendedItem: SuspensionRequestEntityOverview;
   requests: SuspensionRequestSelectModel[];
 }> {
   checkParameterUUID(entityId);
 
-  const targetIds = convertEntityTypeAndIdToSuspensionRequestTargetIds({ entityType, entityId });
-  const entityIds = convertSuspensionRequestTargetIdsToSuspensionRequestEntityIds(targetIds);
-  const entityLookup = await loadSuspensionRequestEntityLookup(entityIds);
-  const suspensionRequest = await dbGetSuspensionRequestsForEntity(targetIds);
-  const groupedSuspensionRequests = groupSuspensionRequestsByEntity([...suspensionRequest]);
+  const entityRef = { entityType, entityId };
+  const suspensionRequests = await dbGetSuspensionRequestsByEntityRefWithEntityDetails(entityRef);
+  const groupedSuspensionRequests = groupSuspensionRequestsByEntity([...suspensionRequests]);
 
   const overviewItem = groupedSuspensionRequests.map((groupedSuspensionRequest) =>
-    buildSuspensionRequestOverview(groupedSuspensionRequest, entityLookup),
+    buildSuspensionRequestEntityOverview(groupedSuspensionRequest),
   )[0];
 
   if (!overviewItem)
     throw new NotFoundError('Suspension request overview not found for the given entity');
 
-  return { suspendedItem: overviewItem, requests: suspensionRequest };
-}
-
-function convertSuspensionRequestTargetIdsToSuspensionRequestEntityIds({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: SuspensionRequestTargetIds): SuspensionRequestEntityIds {
-  return {
-    assistantIds: assistantId ? [assistantId] : [],
-    characterIds: characterId ? [characterId] : [],
-    learningScenarioIds: learningScenarioId ? [learningScenarioId] : [],
-  };
-}
-
-function convertEntityTypeAndIdToSuspensionRequestTargetIds({
-  entityType,
-  entityId,
-}: {
-  entityType: EntityType;
-  entityId: string;
-}): SuspensionRequestTargetIds {
-  if (entityType === 'assistant') {
-    return { assistantId: entityId };
-  }
-  if (entityType === 'character') {
-    return { characterId: entityId };
-  }
-  if (entityType === 'learningScenario') {
-    return { learningScenarioId: entityId };
-  }
-  throw new InvalidArgumentError(
-    "Invalid entity type. Must be 'assistant', 'character' or 'learningScenario'.",
-  );
+  return { suspendedItem: overviewItem, requests: suspensionRequests };
 }

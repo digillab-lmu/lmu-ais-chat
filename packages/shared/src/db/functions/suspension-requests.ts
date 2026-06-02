@@ -1,13 +1,83 @@
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, getTableColumns, sql } from 'drizzle-orm';
 import { NotFoundError } from '@shared/error';
+import {
+  assertEntityType,
+  EntityRef,
+  EntityType,
+  throwEntityInvalidArgumentError,
+} from '@shared/entities/entity-types';
 import { db } from '..';
-import { SuspensionRequestSelectModel, suspensionRequestTable } from '../schema';
+import {
+  assistantTable,
+  characterTable,
+  learningScenarioTable,
+  SuspensionRequestSelectModel,
+  suspensionRequestTable,
+} from '../schema';
 
-type ReportTargetIds = {
-  assistantId?: string;
-  characterId?: string;
-  learningScenarioId?: string;
+type SuspensionRequestWithEntityDetails = SuspensionRequestSelectModel & {
+  entityType: EntityType;
+  entityId: string;
+  entityName: string | null;
+  suspended: boolean | null;
 };
+
+function getSuspensionRequestEntityIdColumn(entityType: EntityType) {
+  assertEntityType(entityType);
+
+  switch (entityType) {
+    case 'assistant':
+      return suspensionRequestTable.assistantId;
+    case 'character':
+      return suspensionRequestTable.characterId;
+    case 'learningScenario':
+      return suspensionRequestTable.learningScenarioId;
+    default:
+      throwEntityInvalidArgumentError();
+  }
+}
+
+function baseSuspensionRequestsWithEntityDetailsQuery() {
+  return db
+    .select({
+      ...getTableColumns(suspensionRequestTable),
+      entityType: sql<EntityType>`
+        CASE
+          WHEN ${suspensionRequestTable.assistantId} IS NOT NULL THEN 'assistant'
+          WHEN ${suspensionRequestTable.characterId} IS NOT NULL THEN 'character'
+          ELSE 'learningScenario'
+        END
+      `,
+      entityId: sql<string>`
+        COALESCE(
+          ${suspensionRequestTable.assistantId},
+          ${suspensionRequestTable.characterId},
+          ${suspensionRequestTable.learningScenarioId}
+        )
+      `,
+      entityName: sql<string | null>`
+        CASE
+          WHEN ${suspensionRequestTable.assistantId} IS NOT NULL THEN ${assistantTable.name}
+          WHEN ${suspensionRequestTable.characterId} IS NOT NULL THEN ${characterTable.name}
+          ELSE ${learningScenarioTable.name}
+        END
+      `,
+      suspended: sql<boolean | null>`
+        CASE
+          WHEN ${suspensionRequestTable.assistantId} IS NOT NULL THEN ${assistantTable.suspended}
+          WHEN ${suspensionRequestTable.characterId} IS NOT NULL THEN ${characterTable.suspended}
+          ELSE ${learningScenarioTable.suspended}
+        END
+      `,
+    })
+    .from(suspensionRequestTable)
+    .leftJoin(assistantTable, eq(suspensionRequestTable.assistantId, assistantTable.id))
+    .leftJoin(characterTable, eq(suspensionRequestTable.characterId, characterTable.id))
+    .leftJoin(
+      learningScenarioTable,
+      eq(suspensionRequestTable.learningScenarioId, learningScenarioTable.id),
+    );
+}
 
 export async function dbCreateSuspensionRequest({
   suspensionRequest,
@@ -24,19 +94,6 @@ export async function dbCreateSuspensionRequest({
   }
 
   return createdSuspensionRequest;
-}
-
-export async function dbGetSuspensionRequestById({
-  suspensionRequestId,
-}: {
-  suspensionRequestId: string;
-}): Promise<SuspensionRequestSelectModel | undefined> {
-  const [suspensionRequest] = await db
-    .select()
-    .from(suspensionRequestTable)
-    .where(eq(suspensionRequestTable.id, suspensionRequestId));
-
-  return suspensionRequest;
 }
 
 export async function dbMarkSuspensionRequestAsChecked({
@@ -57,60 +114,34 @@ export async function dbMarkSuspensionRequestAsChecked({
   return updatedSuspensionRequest;
 }
 
-export async function dbGetPendingSuspensionRequests({
-  limit,
-  offset,
-}: {
-  limit: number;
-  offset: number;
-}): Promise<SuspensionRequestSelectModel[]> {
+export async function dbGetAllSuspensionRequestsWithEntityDetails(): Promise<
+  SuspensionRequestWithEntityDetails[]
+> {
+  return baseSuspensionRequestsWithEntityDetailsQuery().orderBy(
+    desc(suspensionRequestTable.createdAt),
+  );
+}
+
+export async function dbGetSuspensionRequestsByEntityRef({
+  entityType,
+  entityId,
+}: EntityRef): Promise<SuspensionRequestSelectModel[]> {
+  const entityColumn = getSuspensionRequestEntityIdColumn(entityType);
+
   return db
     .select()
     .from(suspensionRequestTable)
-    .where(eq(suspensionRequestTable.checked, false))
-    .orderBy(desc(suspensionRequestTable.createdAt))
-    .limit(limit)
-    .offset(offset);
+    .where(eq(entityColumn, entityId))
+    .orderBy(desc(suspensionRequestTable.createdAt));
 }
 
-export async function dbGetAllSuspensionRequests(): Promise<SuspensionRequestSelectModel[]> {
-  return db.select().from(suspensionRequestTable).orderBy(desc(suspensionRequestTable.createdAt));
-}
+export async function dbGetSuspensionRequestsByEntityRefWithEntityDetails({
+  entityType,
+  entityId,
+}: EntityRef): Promise<SuspensionRequestWithEntityDetails[]> {
+  const entityColumn = getSuspensionRequestEntityIdColumn(entityType);
 
-export async function dbGetSuspensionRequestsForEntity({
-  assistantId,
-  characterId,
-  learningScenarioId,
-}: ReportTargetIds): Promise<SuspensionRequestSelectModel[]> {
-  const providedTargetIds = [assistantId, characterId, learningScenarioId].filter(
-    (id): id is string => id !== undefined,
-  );
-
-  if (providedTargetIds.length === 1) {
-    if (assistantId) {
-      return db
-        .select()
-        .from(suspensionRequestTable)
-        .where(eq(suspensionRequestTable.assistantId, assistantId))
-        .orderBy(desc(suspensionRequestTable.createdAt));
-    }
-
-    if (characterId) {
-      return db
-        .select()
-        .from(suspensionRequestTable)
-        .where(eq(suspensionRequestTable.characterId, characterId))
-        .orderBy(desc(suspensionRequestTable.createdAt));
-    }
-
-    if (learningScenarioId) {
-      return db
-        .select()
-        .from(suspensionRequestTable)
-        .where(eq(suspensionRequestTable.learningScenarioId, learningScenarioId))
-        .orderBy(desc(suspensionRequestTable.createdAt));
-    }
-  }
-
-  throw new Error('Exactly one entity target id is required');
+  return baseSuspensionRequestsWithEntityDetailsQuery()
+    .where(eq(entityColumn, entityId))
+    .orderBy(desc(suspensionRequestTable.createdAt));
 }

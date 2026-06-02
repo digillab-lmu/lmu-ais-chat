@@ -2,27 +2,23 @@
 
 import { requireAuth } from '@/auth/requireAuth';
 import { runServerAction } from '@shared/actions/run-server-action';
-import {
-  createSuspensionRequest,
-  SuspensionRequestTargetIds,
-} from '@shared/suspension/suspension-service';
+import { createSuspensionRequest } from '@shared/suspension/suspension-service';
+import { EntityRef } from '@shared/entities/entity-types';
 
 export async function createSuspensionRequestAction({
-  assistantId,
-  characterId,
-  learningScenarioId,
+  entityType,
+  entityId,
   reason,
   description,
-}: SuspensionRequestTargetIds & {
+}: EntityRef & {
   reason: string;
   description: string;
 }) {
   const { user } = await requireAuth();
 
   return runServerAction(createSuspensionRequest)({
-    assistantId,
-    characterId,
-    learningScenarioId,
+    entityType,
+    entityId,
     requesterId: user.id,
     reason,
     description,
