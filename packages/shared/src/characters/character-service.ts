@@ -7,6 +7,7 @@ import {
   dbGetCharacterById,
   dbGetCharacterByIdOptionalShareData,
   dbGetCharacterByIdWithShareData,
+  dbGetCommunityCharacters,
   dbGetCharacters,
   dbGetCharactersByAssociatedSchools,
   dbGetCharactersByUser,
@@ -55,6 +56,7 @@ import {
   verifySuspensionState,
   verifyReadAccess,
   verifyWriteAccess,
+  filterCommunitySharedByAssociatedSchool,
   filterReadableCustomChats,
 } from '@shared/auth/authorization-service';
 
@@ -241,7 +243,7 @@ export const linkFileToCharacter = async ({
 };
 
 /**
- * User can share a character he owns with the school (access level = school)
+ * User can share a character he owns with the school or community
  * or unshare it (access level = private).
  * User is not allowed to set the access level to global.
  */
@@ -257,7 +259,6 @@ export const updateCharacterAccessLevel = async ({
   checkParameterUUID(characterId);
   accessLevelSchema.parse(accessLevel);
 
-  // Authorization check
   if (accessLevel === 'global') {
     throw new ForbiddenError('Not authorized to set the access level to global');
   }
@@ -562,6 +563,9 @@ export async function getCharacterByAccessLevel({
   let characters: CharacterOptionalShareDataModel[];
 
   switch (accessLevel) {
+    case 'community':
+      characters = await dbGetCommunityCharacters({ user });
+      break;
     case 'global':
       characters = await dbGetGlobalCharacters({ user });
       break;
@@ -597,9 +601,20 @@ export async function getCharactersByOverviewFilter({
     case 'official':
       characters = await dbGetGlobalCharacters({ user });
       break;
-    case 'school':
-      characters = await dbGetCharactersByAssociatedSchools({ user });
+    case 'community':
+      characters = await dbGetCommunityCharacters({ user });
       break;
+    case 'school': {
+      const [schoolCharacters, communityCharacters] = await Promise.all([
+        dbGetCharactersByAssociatedSchools({ user }),
+        dbGetCommunityCharacters({ user }),
+      ]);
+      characters = [
+        ...schoolCharacters,
+        ...filterCommunitySharedByAssociatedSchool({ items: communityCharacters, user }),
+      ];
+      break;
+    }
     default:
       return [];
   }

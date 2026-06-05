@@ -24,6 +24,7 @@ import {
   dbGetCharacterByIdOptionalShareData,
   dbGetCharacterByIdWithShareData,
   dbGetCharactersByAssociatedSchools,
+  dbGetCommunityCharacters,
   dbGetCharactersByUser,
   dbGetGlobalCharacters,
   dbGetSharedCharacterConversations,
@@ -50,6 +51,7 @@ vi.mock('../db/functions/character', () => ({
   dbGetCharacterByIdWithShareData: vi.fn(),
   dbDeleteCharacterByIdAndUser: vi.fn(),
   dbGetCharactersByAssociatedSchools: vi.fn(),
+  dbGetCommunityCharacters: vi.fn(),
   dbGetCharactersByUser: vi.fn(),
   dbGetGlobalCharacters: vi.fn(),
 }));
@@ -898,6 +900,10 @@ describe('character-service', () => {
 
     it.each([
       {
+        accessLevel: 'community' as const,
+        expectedMock: dbGetCommunityCharacters,
+      },
+      {
         accessLevel: 'global' as const,
         expectedMock: dbGetGlobalCharacters,
       },
@@ -946,7 +952,6 @@ describe('character-service', () => {
     it.each([
       { filter: 'mine' as const, expectedMock: dbGetAllCharactersByUser },
       { filter: 'official' as const, expectedMock: dbGetGlobalCharacters },
-      { filter: 'school' as const, expectedMock: dbGetCharactersByAssociatedSchools },
     ])('routes filter=$filter to the correct db function', async ({ filter, expectedMock }) => {
       (expectedMock as MockedFunction<typeof expectedMock>).mockResolvedValue(characters as never);
 
@@ -954,6 +959,59 @@ describe('character-service', () => {
 
       expect(result).toEqual(characters);
       expect(expectedMock).toHaveBeenCalledWith({ user });
+    });
+
+    it('routes filter=community to dbGetCommunityCharacters', async () => {
+      (
+        dbGetCommunityCharacters as MockedFunction<typeof dbGetCommunityCharacters>
+      ).mockResolvedValue(characters as never);
+
+      const result = await getCharactersByOverviewFilter({ filter: 'community', user });
+
+      expect(result).toEqual(characters);
+      expect(dbGetCommunityCharacters).toHaveBeenCalledWith({ user });
+    });
+
+    it('routes filter=school to the school and community db functions', async () => {
+      const schoolCharacter = {
+        id: generateUUID(),
+        userId: generateUUID(),
+        accessLevel: 'school',
+        hasLinkAccess: false,
+        suspended: false,
+        ownerSchoolIds: user.schoolIds,
+      } as unknown as CharacterSelectModel;
+      const communityCharacter = {
+        id: generateUUID(),
+        userId: generateUUID(),
+        accessLevel: 'community',
+        hasLinkAccess: false,
+        suspended: false,
+        ownerSchoolIds: user.schoolIds,
+      } as unknown as CharacterSelectModel;
+      const otherSchoolCommunityCharacter = {
+        id: generateUUID(),
+        userId: generateUUID(),
+        accessLevel: 'community',
+        hasLinkAccess: false,
+        suspended: false,
+        ownerSchoolIds: [],
+      } as unknown as CharacterSelectModel;
+
+      (
+        dbGetCharactersByAssociatedSchools as MockedFunction<
+          typeof dbGetCharactersByAssociatedSchools
+        >
+      ).mockResolvedValue([schoolCharacter] as never);
+      (
+        dbGetCommunityCharacters as MockedFunction<typeof dbGetCommunityCharacters>
+      ).mockResolvedValue([communityCharacter, otherSchoolCommunityCharacter] as never);
+
+      const result = await getCharactersByOverviewFilter({ filter: 'school', user });
+
+      expect(result).toEqual([schoolCharacter, communityCharacter]);
+      expect(dbGetCharactersByAssociatedSchools).toHaveBeenCalledWith({ user });
+      expect(dbGetCommunityCharacters).toHaveBeenCalledWith({ user });
     });
 
     it('returns an empty list for unsupported overview filters', async () => {
