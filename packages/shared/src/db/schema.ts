@@ -383,6 +383,7 @@ export const characterTable = pgTable(
   'character',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    author: text('author').notNull().default(''),
     userId: uuid('user_id')
       .references(() => userTable.id)
       .notNull(),
@@ -596,6 +597,7 @@ export const learningScenarioTable = pgTable(
   'learning_scenario',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    author: text('author').notNull().default(''),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     modelId: uuid('model_id')
@@ -1049,6 +1051,7 @@ export const assistantTable = pgTable(
   'assistant',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    author: text('author').notNull().default(''),
     name: text('name').notNull(),
     systemPrompt: text('system_prompt').notNull(),
     userId: uuid('user_id').references(() => userTable.id),
