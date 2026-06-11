@@ -22,7 +22,12 @@ type AgentLoopParams = {
   agentName: string;
   onTextChunk: (delta: string) => void;
   onToolCall?: (call: ToolCall) => void;
-  onComplete: (result: { fullText: string; usage: TokenUsage; priceInCents: number }) => void;
+  onComplete: (result: {
+    fullText: string;
+    usage: TokenUsage;
+    priceInCents: number;
+    agentLoopMessages: AiCoreMessage[];
+  }) => void;
   onError: (error: Error) => void;
 };
 
@@ -157,7 +162,12 @@ export function runAgentLoop({
         },
       );
 
-      onComplete({ fullText, usage: totalUsage, priceInCents: totalPriceInCents });
+      onComplete({
+        fullText,
+        usage: totalUsage,
+        priceInCents: totalPriceInCents,
+        agentLoopMessages: loopMessages.slice(messages.length),
+      });
     } catch (error) {
       logError('Error during agent loop:', error);
       onError(error instanceof Error ? error : new Error('Unknown error'));
