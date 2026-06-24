@@ -22,11 +22,7 @@ import {
 import { Card, CardContent } from '@ui/components/card';
 import { useLlmModels } from '@/components/providers/llm-model-provider';
 import { CustomChatHeading2 } from '@/components/custom-chat/custom-chat-heading2';
-import { CustomChatShareWithLearners } from '@/components/custom-chat/custom-chat-share-with-learners';
-import {
-  tokenPointsPercentageValues,
-  usageTimeValuesInMinutes,
-} from '../editor/[learningScenarioId]/schema';
+import { CustomChatShareWithLearners } from '@/components/custom-chat/custom-chat-share-with-learners/custom-chat-share-with-learners';
 import {
   shareLearningScenarioAction,
   unshareLearningScenarioAction,
@@ -42,11 +38,15 @@ export function LearningScenarioView({
   fileMappings,
   pictureUrl,
   initialLinks,
+  usedBudget,
+  maxBudget,
 }: {
   learningScenario: LearningScenarioOptionalShareDataModel;
   fileMappings: FileModel[];
   pictureUrl: string | undefined;
   initialLinks: WebSource[];
+  usedBudget: number;
+  maxBudget: number;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -118,8 +118,8 @@ export function LearningScenarioView({
         manuallyStoppedAt={learningScenario.manuallyStoppedAt}
         maxUsageTimeLimit={learningScenario.maxUsageTimeLimit}
         tokenPointsLimit={learningScenario.tokenPointsLimit}
-        pointsPercentageValues={tokenPointsPercentageValues}
-        usageTimeValues={usageTimeValuesInMinutes}
+        usedBudget={usedBudget}
+        maxBudget={maxBudget}
         onShare={handleShareLearningScenario}
         onUnshare={handleUnshareLearningScenario}
         shareUILink={`/learning-scenarios/editor/${learningScenario.id}/share`}

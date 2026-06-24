@@ -36,11 +36,7 @@ import { CustomChatActionUse } from '@/components/custom-chat/custom-chat-action
 import { CustomChatActionDelete } from '@/components/custom-chat/custom-chat-action-delete';
 import { CustomChatActionDuplicate } from '@/components/custom-chat/custom-chat-action-duplicate';
 import { CustomChatShareInfo } from '@/components/custom-chat/custom-chat-share-info';
-import { CustomChatShareWithLearners } from '@/components/custom-chat/custom-chat-share-with-learners';
-import {
-  tokenPointsPercentageValues,
-  usageTimeValuesInMinutes,
-} from '../../../learning-scenarios/editor/[learningScenarioId]/schema';
+import { CustomChatShareWithLearners } from '@/components/custom-chat/custom-chat-share-with-learners/custom-chat-share-with-learners';
 import { CustomChatHeading2 } from '@/components/custom-chat/custom-chat-heading2';
 import { CustomChatImageUpload } from '@/components/custom-chat/custom-chat-image-upload';
 import { FieldGroup } from '@ui/components/field';
@@ -133,11 +129,15 @@ export function CharacterEdit({
   relatedFiles,
   initialLinks,
   avatarPictureUrl,
+  usedBudget,
+  maxBudget,
 }: {
   character: CharacterOptionalShareDataModel;
   relatedFiles: FileModel[];
   initialLinks: WebSource[];
   avatarPictureUrl?: string;
+  usedBudget: number;
+  maxBudget: number;
 }) {
   useForceReloadOnBrowserBackButton();
   const router = useRouter();
@@ -390,8 +390,8 @@ export function CharacterEdit({
           manuallyStoppedAt={character.manuallyStoppedAt}
           maxUsageTimeLimit={character.maxUsageTimeLimit}
           tokenPointsLimit={character.tokenPointsLimit}
-          pointsPercentageValues={tokenPointsPercentageValues}
-          usageTimeValues={usageTimeValuesInMinutes}
+          usedBudget={usedBudget}
+          maxBudget={maxBudget}
           onShare={async (data) => {
             const result = await shareCharacterAction({
               id: character.id,

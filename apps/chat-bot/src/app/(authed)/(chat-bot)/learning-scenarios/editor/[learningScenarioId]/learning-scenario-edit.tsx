@@ -55,8 +55,7 @@ import { WebSource } from '@shared/db/types';
 import CustomShareSection from '@/components/custom-chat/custom-chat-share-section';
 import { useLlmModels } from '@/components/providers/llm-model-provider';
 import { getDefaultModel } from '@shared/llm-models/llm-model-service';
-import { CustomChatShareWithLearners } from '@/components/custom-chat/custom-chat-share-with-learners';
-import { tokenPointsPercentageValues, usageTimeValuesInMinutes } from './schema';
+import { CustomChatShareWithLearners } from '@/components/custom-chat/custom-chat-share-with-learners/custom-chat-share-with-learners';
 import { CustomChatHeading2 } from '@/components/custom-chat/custom-chat-heading2';
 import { CustomChatInstructionsExampleDialog } from '@/components/custom-chat/custom-chat-instructions-example-dialog';
 import { CustomChatHeaderContent } from '@/components/custom-chat/custom-chat-header-content';
@@ -134,11 +133,15 @@ export function LearningScenarioEdit({
   relatedFiles,
   initialLinks,
   avatarPictureUrl,
+  usedBudget,
+  maxBudget,
 }: {
   learningScenario: LearningScenarioOptionalShareDataModel;
   relatedFiles: FileModel[];
   initialLinks: WebSource[];
   avatarPictureUrl?: string;
+  usedBudget: number;
+  maxBudget: number;
 }) {
   useForceReloadOnBrowserBackButton();
   const router = useRouter();
@@ -411,8 +414,8 @@ export function LearningScenarioEdit({
           manuallyStoppedAt={learningScenario.manuallyStoppedAt}
           maxUsageTimeLimit={learningScenario.maxUsageTimeLimit}
           tokenPointsLimit={learningScenario.tokenPointsLimit}
-          pointsPercentageValues={tokenPointsPercentageValues}
-          usageTimeValues={usageTimeValuesInMinutes}
+          usedBudget={usedBudget}
+          maxBudget={maxBudget}
           onShare={async (data) =>
             await shareLearningScenarioAction({
               learningScenarioId: learningScenario.id,

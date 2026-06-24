@@ -487,7 +487,8 @@
       "max-usage": "Maximale Nutzungszeit",
       "button-start": "Jetzt bereitstellen",
       "button-stop": "Stoppen",
-      "share": "Teilen"
+      "share": "Teilen",
+      "maximum": "Maximum"
     },
     "share-page": {
       "go-to": "Gehe auf",
