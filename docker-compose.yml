@@ -140,7 +140,9 @@ services:
       start_period: 30s
 
   ais-chat-api:
-    image: ghcr.io/fwu-de/ais-chat-api@sha256:0639d8298a8f11d2182a5260ea0d49b1611058e25341fff1b43dea2f93d2f023
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     container_name: ais-chat-api
     restart: unless-stopped
     environment:
@@ -166,7 +168,9 @@ services:
         condition: service_started
 
   ais-chat-app:
-    image: ghcr.io/fwu-de/ais-chat-app@sha256:29a2fec9c93b4b1a0143a00c77183140c8ef6cc023fe2496d7d2c7298960a2a3
+    build:
+      context: .
+      dockerfile: apps/chat-bot/Dockerfile
     container_name: ais-chat-app
     restart: unless-stopped
     extra_hosts:
@@ -220,7 +224,9 @@ services:
         condition: service_started
 
   ais-chat-admin:
-    image: ghcr.io/fwu-de/ais-chat-admin@sha256:ac2f160215b8dc1636ba5dda84c783bc1ccf6f2de28abeb8a333659d9a6c7176
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile
     container_name: ais-chat-admin
     restart: unless-stopped
     extra_hosts:
