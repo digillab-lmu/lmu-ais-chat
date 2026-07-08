@@ -1,10 +1,8 @@
 import { getHostByHeaders } from '@/utils/host';
 import Link from 'next/link';
-import { IMPRESSUM_URL, PRIVACY_POLICY_URL, TERMS_OF_USE_URL } from './const';
-
+import { IMPRESSUM_URL, PRIVACY_POLICY_URL, TERMS_OF_USE_URL, CONSENT_FORM_URL } from './const';
 export default async function Footer() {
   const baseUrl = await getHostByHeaders();
-
   return (
     <footer className="flex gap-4 flex-wrap w-full my-4 sm:my-8">
       <span>{baseUrl}</span>
@@ -17,6 +15,9 @@ export default async function Footer() {
       </Link>
       <Link href={TERMS_OF_USE_URL} prefetch={false} className="hover:underline">
         Nutzungsbedingungen
+      </Link>
+      <Link href={CONSENT_FORM_URL} prefetch={false} className="hover:underline">
+        Muster-Einverständniserklärung
       </Link>
     </footer>
   );

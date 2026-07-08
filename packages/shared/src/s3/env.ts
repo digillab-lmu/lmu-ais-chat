@@ -11,11 +11,13 @@ export const env = createEnv({
     otcBucketName: z.string(),
     otcS3Hostname: z.string(),
     otcSecretAccessKey: z.string(),
+    otcPublicS3Url: z.string().optional(),
   },
   runtimeEnv: {
     otcAccessKeyId: process.env.OTC_ACCESS_KEY_ID,
     otcBucketName: process.env.OTC_BUCKET_NAME,
     otcS3Hostname: process.env.OTC_S3_HOSTNAME,
     otcSecretAccessKey: process.env.OTC_SECRET_ACCESS_KEY,
+    otcPublicS3Url: process.env.OTC_PUBLIC_S3_URL,
   },
 });

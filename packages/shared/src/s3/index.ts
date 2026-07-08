@@ -64,20 +64,17 @@ export async function uploadFileToS3({
   contentType: string;
 }) {
   let processedBody = body;
-
   // Convert Blob to Buffer to avoid hash calculation issues
   if (body instanceof Blob) {
     const arrayBuffer = await body.arrayBuffer();
     processedBody = Buffer.from(arrayBuffer);
   }
-
   const uploadParams: PutObjectCommandInput = {
     Bucket: env.otcBucketName,
     Key: key ?? nanoid(),
     Body: processedBody,
     ContentType: contentType,
   };
-
   const command = new PutObjectCommand(uploadParams);
   await s3Client.send(command);
 }
@@ -93,7 +90,6 @@ export async function copyFileInS3({ newKey, copySource }: { newKey: string; cop
     Key: newKey,
     CopySource: `${env.otcBucketName}/${copySource}`,
   };
-
   try {
     const command = new CopyObjectCommand(copyParams);
     await s3Client.send(command);
@@ -129,7 +125,6 @@ export async function getReadOnlySignedUrl({
     // Refresh URL in the background before it expires
     revalidate: Math.max(expiresIn - ONE_HOUR, expiresIn / 2),
   });
-
   let contentDisposition = attachment ? 'attachment' : '';
   if (filename !== undefined) {
     const dispositionType = attachment ? 'attachment' : 'inline';
@@ -142,9 +137,19 @@ export async function getReadOnlySignedUrl({
     ...(contentDisposition !== '' ? { ResponseContentDisposition: contentDisposition } : {}),
     ...(contentType !== undefined ? { ResponseContentType: contentType } : {}),
   });
-
   try {
-    return await getSignedUrl(s3Client, command, { expiresIn });
+    const signedUrl = await getSignedUrl(s3Client, command, { expiresIn });
+    // If a public-facing S3 URL is configured (e.g. behind an nginx proxy), rewrite the
+    // internal-only host of the presigned URL so it is resolvable by browsers.
+    if (env.otcPublicS3Url) {
+      const url = new URL(signedUrl);
+      const publicUrl = new URL(env.otcPublicS3Url);
+      url.protocol = publicUrl.protocol;
+      url.host = publicUrl.host;
+      url.pathname = publicUrl.pathname.replace(/\/$/, '') + url.pathname;
+      return url.toString();
+    }
+    return signedUrl;
   } catch (error) {
     logError('Error generating signed GET URL for S3', error);
     throw error;
@@ -161,7 +166,6 @@ export async function deleteFileFromS3({ key }: { key: string }) {
     Bucket: env.otcBucketName,
     Key: key,
   };
-
   const command = new DeleteObjectCommand(deleteParams);
   await s3Client.send(command);
 }
@@ -175,7 +179,6 @@ export async function deleteFilesFromS3(keys: string[]) {
   if (keys.length === 0) {
     return;
   }
-
   const uniqueKeys = [...new Set(keys)];
   const chunks = chunkArray(uniqueKeys, S3_DELETE_OBJECTS_MAX);
   await Promise.all(
@@ -187,7 +190,6 @@ export async function deleteFilesFromS3(keys: string[]) {
           Quiet: true,
         },
       };
-
       try {
         const command = new DeleteObjectsCommand(deleteParams);
         await s3Client.send(command);
@@ -216,7 +218,6 @@ export async function listFilesFromS3({
 } = {}) {
   const allObjects: string[] = [];
   let continuationToken: string | undefined = undefined;
-
   do {
     const listParams: ListObjectsV2CommandInput = {
       Bucket: env.otcBucketName,
@@ -226,7 +227,6 @@ export async function listFilesFromS3({
     };
     const command = new ListObjectsV2Command(listParams);
     const response = await s3Client.send(command);
-
     let objects = response.Contents;
     if (objects) {
       if (minAgeInSeconds !== undefined) {
@@ -241,10 +241,8 @@ export async function listFilesFromS3({
         );
       allObjects.push(...keys);
     }
-
     continuationToken = response.NextContinuationToken;
   } while (continuationToken);
-
   return allObjects;
 }
 
@@ -253,7 +251,6 @@ export async function getFileFromS3(key: string): Promise<Readable> {
     Bucket: env.otcBucketName,
     Key: key,
   });
-
   try {
     const response = await s3Client.send(command);
     if (!response.Body) {

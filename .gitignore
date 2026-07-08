@@ -37,7 +37,6 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
-!.env
 !.env.e2e
 
 # vercel
@@ -60,3 +59,11 @@ test-results/
 apps/chat-bot/e2e/load_test/*.js
 apps/chat-bot/e2e/load_test/success-results/
 apps/chat-bot/e2e/load_test/error-results/
+
+# lokale Server-/Deployment-spezifische Dateien (nicht Teil des Quellcodes)
+.env
+config/
+data/
+docker-compose.yml.bak-*
+*.bak
+patches/
