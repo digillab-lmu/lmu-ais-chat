@@ -716,8 +716,16 @@
       "alwaysDisplayInConsole": true,
       "clientAuthenticatorType": "client-secret",
       "secret": "${CLIENT_SECRET}",
-      "redirectUris": ["http://localhost/*"],
-      "webOrigins": ["http://localhost"],
+      "redirectUris": [
+        "https://ais-chat.edpsych-ai.de/*",
+        "https://ais-admin.edpsych-ai.de/*",
+        "http://localhost/*"
+      ],
+      "webOrigins": [
+        "https://ais-chat.edpsych-ai.de",
+        "https://ais-admin.edpsych-ai.de",
+        "http://localhost"
+      ],
       "notBefore": 0,
       "bearerOnly": false,
       "consentRequired": false,
