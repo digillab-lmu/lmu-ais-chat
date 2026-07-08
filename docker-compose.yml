@@ -1,7 +1,6 @@
 name: ais-chat
 
 services:
-
   ais-keycloak-fix-perms:
     image: alpine
     restart: no
@@ -16,13 +15,13 @@ services:
     container_name: ais-keycloak
     restart: unless-stopped
     labels:
-      backup-stop: "true"
+      backup-stop: 'true'
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PW}
       KC_HOSTNAME: ais-auth.edpsych-ai.de
       KC_PROXY_HEADERS: xforwarded
-      KC_HTTP_ENABLED: "true"
+      KC_HTTP_ENABLED: 'true'
       CLIENT_NAME: ais-chat-dev-client
       CLIENT_SECRET: ${KC_CLIENT_SECRET}
     entrypoint: /opt/keycloak/data/import/entrypoint.sh
@@ -30,7 +29,7 @@ services:
       - /srv/ais-chat/data/keycloak:/opt/keycloak/data/h2
       - /srv/ais-chat/devops/docker/keycloak:/opt/keycloak/data/import
     ports:
-      - "127.0.0.1:16080:8080"
+      - '127.0.0.1:16080:8080'
     networks:
       - ais-network
     depends_on:
@@ -42,7 +41,7 @@ services:
     container_name: ais-postgres
     restart: unless-stopped
     labels:
-      backup-stop: "true"
+      backup-stop: 'true'
     environment:
       POSTGRES_DB: app_db
       POSTGRES_USER: admin
@@ -64,7 +63,7 @@ services:
     container_name: ais-valkey
     restart: unless-stopped
     labels:
-      backup-stop: "true"
+      backup-stop: 'true'
     volumes:
       - /srv/ais-chat/data/valkey:/data
     networks:
@@ -117,13 +116,13 @@ services:
     container_name: ais-rustfs
     restart: unless-stopped
     ports:
-      - "127.0.0.1:19000:9000"
+      - '127.0.0.1:19000:9000'
     labels:
-      backup-stop: "true"
+      backup-stop: 'true'
     environment:
       RUSTFS_ADDRESS: 0.0.0.0:9000
       RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
-      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ENABLE: 'true'
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
       RUSTFS_VOLUMES: /data
@@ -153,12 +152,12 @@ services:
       LOG_LEVEL: info
       LLM_IONOS_API_KEY: API_KEY_PLACEHOLDER
       LLM_IONOS_BASE_URL: PLACEHOLDER_BASE_URL
-      LLM_GPT4OMINI_API_KEY: ${LLM_GPT4OMINI_API_KEY} 
+      LLM_GPT4OMINI_API_KEY: ${LLM_GPT4OMINI_API_KEY}
       LLM_GPT4OMINI_BASE_URL: https://api.openai.com/v1
       LLM_GPT5NANO_API_KEY: ${LLM_GPT5NANO_API_KEY}
       LLM_GPT5NANO_BASE_URL: https://api.openai.com/v1
     ports:
-      - "127.0.0.1:16002:3002"
+      - '127.0.0.1:16002:3002'
     networks:
       - ais-network
     depends_on:
@@ -174,7 +173,7 @@ services:
     container_name: ais-chat-app
     restart: unless-stopped
     extra_hosts:
-      - "ais-auth.edpsych-ai.de:host-gateway"
+      - 'ais-auth.edpsych-ai.de:host-gateway'
     environment:
       HOSTNAME: 0.0.0.0
       PORT: 3000
@@ -202,9 +201,9 @@ services:
       NEXTAUTH_URL: https://ais-chat.edpsych-ai.de
       OTC_S3_HOSTNAME: ais-s3-proxy
       OTC_PUBLIC_S3_URL: ${OTC_PUBLIC_S3_URL}
-      NODE_USE_SYSTEM_CA: "1"
+      NODE_USE_SYSTEM_CA: '1'
     ports:
-      - "127.0.0.1:16000:3000"
+      - '127.0.0.1:16000:3000'
     networks:
       - ais-network
     volumes:
@@ -230,7 +229,7 @@ services:
     container_name: ais-chat-admin
     restart: unless-stopped
     extra_hosts:
-      - "ais-auth.edpsych-ai.de:host-gateway"
+      - 'ais-auth.edpsych-ai.de:host-gateway'
     environment:
       HOSTNAME: 0.0.0.0
       PORT: 3001
@@ -247,9 +246,9 @@ services:
       NEXTAUTH_URL: https://ais-admin.edpsych-ai.de
       OTC_S3_HOSTNAME: ais-s3-proxy
       OTC_PUBLIC_S3_URL: ${OTC_PUBLIC_S3_URL}
-      NODE_USE_SYSTEM_CA: "1"
+      NODE_USE_SYSTEM_CA: '1'
     ports:
-      - "127.0.0.1:16001:3001"
+      - '127.0.0.1:16001:3001'
     networks:
       - ais-network
     volumes:
@@ -275,7 +274,7 @@ services:
         condition: service_healthy
       ais-postgres:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: ['/bin/sh', '-c']
     command:
       - |
         echo '=== AIS.chat Init ===' &&
@@ -298,14 +297,11 @@ services:
         except Exception as e:
             print("Bucket:",str(e)[:80])
         ' &&
-        
-        
+
+
         PGPASSWORD="$$DB_PASSWORD" psql -h ais-postgres -U admin -d api_db \
           -c "INSERT INTO organization (name) SELECT 'LOCAL' WHERE NOT EXISTS (SELECT 1 FROM organization);" &&
         echo '=== Init abgeschlossen ==='
-
-
-
 
   ais-s3-proxy:
     image: nginx:alpine
@@ -320,10 +316,7 @@ services:
         aliases:
           - ais-chat.ais-s3-proxy
 
-
-
 networks:
   ais-network:
     name: ais-network
     driver: bridge
-
