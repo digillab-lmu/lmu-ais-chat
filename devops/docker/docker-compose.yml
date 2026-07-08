@@ -131,7 +131,9 @@ services:
 
   # AIS.chat API - OpenAI compatible API service
   ais-chat-api:
-    image: ghcr.io/fwu-de/ais-chat-api:latest
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     environment:
       # Database
@@ -161,7 +163,9 @@ services:
 
   # AIS.chat App - Main user-facing application
   ais-chat-app:
-    image: ghcr.io/fwu-de/ais-chat-app:latest
+    build:
+      context: ../..
+      dockerfile: apps/chat-bot/Dockerfile
     restart: unless-stopped
     environment:
       # Application
@@ -230,7 +234,9 @@ services:
 
   # AIS.chat Admin - Administration interface
   ais-chat-admin:
-    image: ghcr.io/fwu-de/ais-chat-admin:latest
+    build:
+      context: ../..
+      dockerfile: apps/admin/Dockerfile
     restart: unless-stopped
     environment:
       # Application

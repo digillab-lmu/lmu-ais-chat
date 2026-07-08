@@ -1,10 +1,7 @@
 name: Docker Build
 
 on:
-  workflow_run:
-    workflows: ['Build'] # must match the name from `checks.yml`
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: docker-build-main
