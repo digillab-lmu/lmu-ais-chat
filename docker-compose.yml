@@ -1,0 +1,323 @@
+name: ais-chat
+
+services:
+
+  ais-keycloak-fix-perms:
+    image: alpine
+    restart: no
+    entrypoint: /bin/sh -c "chown 1000 /keycloak"
+    volumes:
+      - /srv/ais-chat/data/keycloak:/keycloak
+    networks:
+      - ais-network
+
+  ais-keycloak:
+    image: quay.io/keycloak/keycloak:26.6.3
+    container_name: ais-keycloak
+    restart: unless-stopped
+    labels:
+      backup-stop: "true"
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PW}
+      KC_HOSTNAME: ais-auth.edpsych-ai.de
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      CLIENT_NAME: ais-chat-dev-client
+      CLIENT_SECRET: ${KC_CLIENT_SECRET}
+    entrypoint: /opt/keycloak/data/import/entrypoint.sh
+    volumes:
+      - /srv/ais-chat/data/keycloak:/opt/keycloak/data/h2
+      - /srv/ais-chat/devops/docker/keycloak:/opt/keycloak/data/import
+    ports:
+      - "127.0.0.1:16080:8080"
+    networks:
+      - ais-network
+    depends_on:
+      ais-keycloak-fix-perms:
+        condition: service_completed_successfully
+
+  ais-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ais-postgres
+    restart: unless-stopped
+    labels:
+      backup-stop: "true"
+    environment:
+      POSTGRES_DB: app_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - /srv/ais-chat/data/postgres:/var/lib/postgresql/data
+      - /srv/ais-chat/devops/docker/postgres:/docker-entrypoint-initdb.d:ro
+    networks:
+      - ais-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U admin -d app_db']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ais-valkey:
+    image: ghcr.io/valkey-io/valkey:8
+    container_name: ais-valkey
+    restart: unless-stopped
+    labels:
+      backup-stop: "true"
+    volumes:
+      - /srv/ais-chat/data/valkey:/data
+    networks:
+      - ais-network
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ais-rabbitmq:
+    image: rabbitmq:4-management
+    container_name: ais-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PW}
+    networks:
+      - ais-network
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'ping']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  ais-crawl4ai:
+    image: unclecode/crawl4ai:0.8.9
+    container_name: ais-crawl4ai
+    restart: unless-stopped
+    environment:
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_TOKEN}
+    shm_size: '2gb'
+    deploy:
+      resources:
+        limits:
+          memory: '2gb'
+        reservations:
+          memory: '1gb'
+    networks:
+      - ais-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:11235/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  ais-rustfs:
+    image: rustfs/rustfs@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+    container_name: ais-rustfs
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:19000:9000"
+    labels:
+      backup-stop: "true"
+    environment:
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_SERVER_DOMAINS: ais-s3-proxy
+    volumes:
+      - /srv/ais-chat/data/rustfs:/data
+    networks:
+      - ais-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:9000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  ais-chat-api:
+    image: ghcr.io/fwu-de/ais-chat-api@sha256:0639d8298a8f11d2182a5260ea0d49b1611058e25341fff1b43dea2f93d2f023
+    container_name: ais-chat-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://admin:${DB_PASSWORD}@ais-postgres:5432/api_db
+      API_NAME: ais-chat
+      API_KEY: ${API_KEY}
+      PORT: 3002
+      LOG_LEVEL: info
+      LLM_IONOS_API_KEY: API_KEY_PLACEHOLDER
+      LLM_IONOS_BASE_URL: PLACEHOLDER_BASE_URL
+      LLM_GPT4OMINI_API_KEY: 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 
+      LLM_GPT4OMINI_BASE_URL: https://api.openai.com/v1
+      LLM_GPT5NANO_API_KEY: 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
+      LLM_GPT5NANO_BASE_URL: https://api.openai.com/v1
+    ports:
+      - "127.0.0.1:16002:3002"
+    networks:
+      - ais-network
+    depends_on:
+      ais-postgres:
+        condition: service_healthy
+      ais-keycloak:
+        condition: service_started
+
+  ais-chat-app:
+    image: ghcr.io/fwu-de/ais-chat-app@sha256:29a2fec9c93b4b1a0143a00c77183140c8ef6cc023fe2496d7d2c7298960a2a3
+    container_name: ais-chat-app
+    restart: unless-stopped
+    extra_hosts:
+      - "ais-auth.edpsych-ai.de:host-gateway"
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      API_KEY: ${API_KEY}
+      NODE_ENV: production
+      AUTH_SECRET: ${AUTH_SECRET}
+      VIDIS_CLIENT_ID: ais-chat-dev-client
+      VIDIS_CLIENT_SECRET: ${KC_CLIENT_SECRET}
+      VIDIS_BASE_URI: https://ais-auth.edpsych-ai.de/realms/ais-chat-local
+      VIDIS_ISSUER_URI: https://ais-auth.edpsych-ai.de/realms/ais-chat-local
+      DATABASE_URL: postgresql://admin:${DB_PASSWORD}@ais-postgres:5432/app_db
+      API_DATABASE_URL: postgresql://admin:${DB_PASSWORD}@ais-postgres:5432/api_db
+      DB_CACHE_TTL_SECONDS: 300
+      VALKEY_URL: redis://ais-valkey:6379/0
+      RABBITMQ_URI: amqp://user:${RABBITMQ_PW}@ais-rabbitmq:5672
+      API_URL: http://ais-chat-api:3002
+      CRAWL4AI_URL: http://ais-crawl4ai:11235
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_TOKEN}
+      OTC_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}
+      OTC_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY}
+      OTC_BUCKET_NAME: ais-chat
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      GOOGLE_APPLICATION_CREDENTIALS: ''
+      NEXT_PUBLIC_SENTRY_LOG_LEVEL: info
+      NEXTAUTH_URL: https://ais-chat.edpsych-ai.de
+      OTC_S3_HOSTNAME: ais-s3-proxy
+      OTC_PUBLIC_S3_URL: ${OTC_PUBLIC_S3_URL}
+      NODE_USE_SYSTEM_CA: "1"
+    ports:
+      - "127.0.0.1:16000:3000"
+    networks:
+      - ais-network
+    volumes:
+      - /srv/ais-chat/config/s3-proxy/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    depends_on:
+      ais-postgres:
+        condition: service_healthy
+      ais-valkey:
+        condition: service_healthy
+      ais-rabbitmq:
+        condition: service_healthy
+      ais-crawl4ai:
+        condition: service_healthy
+      ais-rustfs:
+        condition: service_healthy
+      ais-keycloak:
+        condition: service_started
+
+  ais-chat-admin:
+    image: ghcr.io/fwu-de/ais-chat-admin@sha256:ac2f160215b8dc1636ba5dda84c783bc1ccf6f2de28abeb8a333659d9a6c7176
+    container_name: ais-chat-admin
+    restart: unless-stopped
+    extra_hosts:
+      - "ais-auth.edpsych-ai.de:host-gateway"
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3001
+      AUTH_SECRET: ${AUTH_SECRET}
+      KEYCLOAK_CLIENT_ID: ais-chat-dev-client
+      KEYCLOAK_CLIENT_SECRET: ${KC_CLIENT_SECRET}
+      KEYCLOAK_ISSUER: https://ais-auth.edpsych-ai.de/realms/ais-chat-local
+      DATABASE_URL: postgresql://admin:${DB_PASSWORD}@ais-postgres:5432/app_db
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      API_DATABASE_URL: postgresql://admin:${DB_PASSWORD}@ais-postgres:5432/api_db
+      API_KEY: ${API_KEY}
+      API_URL: http://ais-chat-api:3002
+      NEXT_PUBLIC_SENTRY_LOG_LEVEL: info
+      NEXTAUTH_URL: https://ais-admin.edpsych-ai.de
+      OTC_S3_HOSTNAME: ais-s3-proxy
+      OTC_PUBLIC_S3_URL: ${OTC_PUBLIC_S3_URL}
+      NODE_USE_SYSTEM_CA: "1"
+    ports:
+      - "127.0.0.1:16001:3001"
+    networks:
+      - ais-network
+    volumes:
+      - /srv/ais-chat/config/s3-proxy/ca-bundle.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    depends_on:
+      ais-postgres:
+        condition: service_healthy
+      ais-keycloak:
+        condition: service_started
+
+  ais-chat-init:
+    image: alpine:3.24.1
+    container_name: ais-chat-init
+    restart: no
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+      DB_PASSWORD: ${DB_PASSWORD}
+    networks:
+      - ais-network
+    depends_on:
+      ais-rustfs:
+        condition: service_healthy
+      ais-postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo '=== AIS.chat Init ===' &&
+        apk add --no-cache postgresql-client python3 py3-pip &&
+        pip install --quiet --break-system-packages boto3 &&
+        python3 -c '
+        import boto3,os,urllib3
+        urllib3.disable_warnings()
+        from botocore.config import Config
+        s3=boto3.client("s3",
+            endpoint_url="https://ais-s3-proxy",
+            aws_access_key_id=os.environ["RUSTFS_ACCESS_KEY"],
+            aws_secret_access_key=os.environ["RUSTFS_SECRET_KEY"],
+            region_name="eu-nl",
+            verify=False,
+            config=Config(s3={"addressing_style":"virtual"}))
+        try:
+            s3.create_bucket(Bucket="ais-chat")
+            print("Bucket ais-chat created")
+        except Exception as e:
+            print("Bucket:",str(e)[:80])
+        ' &&
+        
+        
+        PGPASSWORD="$$DB_PASSWORD" psql -h ais-postgres -U admin -d api_db \
+          -c "INSERT INTO organization (name) SELECT 'LOCAL' WHERE NOT EXISTS (SELECT 1 FROM organization);" &&
+        echo '=== Init abgeschlossen ==='
+
+
+
+
+  ais-s3-proxy:
+    image: nginx:alpine
+    container_name: ais-s3-proxy
+    restart: unless-stopped
+    volumes:
+      - /srv/ais-chat/config/s3-proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /srv/ais-chat/config/s3-proxy/cert.pem:/etc/nginx/certs/cert.pem:ro
+      - /srv/ais-chat/config/s3-proxy/key.pem:/etc/nginx/certs/key.pem:ro
+    networks:
+      ais-network:
+        aliases:
+          - ais-chat.ais-s3-proxy
+
+
+
+networks:
+  ais-network:
+    name: ais-network
+    driver: bridge
+
