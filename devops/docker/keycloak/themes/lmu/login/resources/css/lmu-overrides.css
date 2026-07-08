@@ -1,0 +1,57 @@
+:root {
+  --keycloak-card-top-color: #00883a;
+  --keycloak-logo-url: url('https://edpsych-ai.de/cdn/images/LMU_Logo_RGB_FlaechigGruen.png');
+  --keycloak-logo-height: 48px;
+  --keycloak-logo-width: auto;
+
+  --pf-v5-global--primary-color--100: #00883a;
+  --pf-v5-global--active-color--100: #00883a;
+
+  --pf-v5-global--link--Color: #00883a;
+  --pf-v5-global--link--Color--hover: #006d2e;
+  --pf-v5-global--link--Color--light: #1ba24e;
+  --pf-v5-global--link--Color--light--hover: #3fbf6f;
+  --pf-v5-global--link--Color--dark: #1ba24e;
+  --pf-v5-global--link--Color--dark--hover: #3fbf6f;
+  --pf-v5-global--link--Color--visited: #006d2e;
+}
+
+/* Override the primary button directly (background+text as a pair) instead of
+   chasing global color primitives, since dark mode remaps them unpredictably
+   (e.g. the primary button's text color pulls from --primary-color--400,
+   which would otherwise clash with a --dark-100 background override). */
+.pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: #00883a;
+  --pf-v5-c-button--m-primary--Color: #ffffff;
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: #006d2e;
+  --pf-v5-c-button--m-primary--hover--Color: #ffffff;
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: #006d2e;
+  --pf-v5-c-button--m-primary--focus--Color: #ffffff;
+  --pf-v5-c-button--m-primary--active--BackgroundColor: #006d2e;
+  --pf-v5-c-button--m-primary--active--Color: #ffffff;
+}
+
+#kc-header-wrapper.pf-v5-c-brand {
+  background-image: url('https://edpsych-ai.de/cdn/images/LMU_Logo_RGB_FlaechigGruen.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: left center;
+  height: 40px;
+  width: 220px;
+  text-indent: -9999px;
+  overflow: hidden;
+}
+
+/* Replace the default Keycloak polygon background image with a plain,
+   neutral backdrop so the LMU logo/card stand out instead of competing
+   with a busy pattern. Sekundär Lichtgrau in light mode; matches the
+   dark card's own background tone in dark mode to avoid a jarring jump. */
+.login-pf body {
+  background: #f5f5f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-pf body {
+    background: #26292d;
+  }
+}

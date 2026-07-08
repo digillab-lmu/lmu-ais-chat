@@ -16,6 +16,7 @@ services:
     volumes:
       - keycloak_data:/opt/keycloak/data/h2
       - ./keycloak:/opt/keycloak/data/import
+      - ./keycloak/themes/lmu:/opt/keycloak/themes/lmu
     ports:
       - '3000:3000' # ais-chat-app
       - '3001:3001' # ais-chat-admin

@@ -1,6 +1,7 @@
 {
   "id": "d1a51226-5a15-4087-9d4f-a9e825292aeb",
   "realm": "ais-chat-local",
+  "loginTheme": "lmu",
   "notBefore": 0,
   "defaultSignatureAlgorithm": "RS256",
   "revokeRefreshToken": false,

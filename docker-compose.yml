@@ -28,6 +28,7 @@ services:
     volumes:
       - /srv/ais-chat/data/keycloak:/opt/keycloak/data/h2
       - /srv/ais-chat/devops/docker/keycloak:/opt/keycloak/data/import
+      - /srv/ais-chat/devops/docker/keycloak/themes/lmu:/opt/keycloak/themes/lmu
     ports:
       - '127.0.0.1:16080:8080'
     networks:
