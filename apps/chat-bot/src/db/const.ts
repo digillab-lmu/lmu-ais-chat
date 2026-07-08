@@ -8,7 +8,7 @@ export const CENT_MULTIPLIER = 10;
 export const PRICE_AND_CENT_MULTIPLIER = TOKEN_AMOUNT_PER_PRICE * CENT_MULTIPLIER;
 
 export const DEFAULT_DESIGN_CONFIGURATION: DesignConfiguration = {
-  primaryColor: '#00883A', // LMU Grün
+  primaryColor: '#006D2E', // abgetöntes LMU Grün (dunkler für bessere Lesbarkeit als Textfarbe)
   primaryTextColor: '#FFFFFF',
   secondaryColor: '#E6E6E7', // Sekundär Hellgrau
   secondaryTextColor: '#232323', // LMU Schwarz
