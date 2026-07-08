@@ -43,10 +43,10 @@ export default function LoginForm() {
           size="xl"
           className="w-full"
           onClick={() => signIn('vidis', { callbackUrl })}
-          aria-label="Mit VIDIS einloggen"
+          aria-label="Einloggen"
           data-testid="vidis-login-button"
         >
-          Mit VIDIS einloggen
+          Einloggen
         </Button>
       </div>
     </main>
