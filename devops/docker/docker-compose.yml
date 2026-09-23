@@ -274,7 +274,7 @@ services:
 
   # Initialization container
   ais-chat-init:
-    image: alpine:3.24.1
+    image: alpine:3.24.2
     restart: no
     environment:
       # Database URLs for both databases
