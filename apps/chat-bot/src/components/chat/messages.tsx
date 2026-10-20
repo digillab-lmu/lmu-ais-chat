@@ -1,8 +1,10 @@
-import { type UIMessage, type ChatStatus } from '@/types/chat';
-import { ChatBox, type PendingFileModel } from './chat-box';
-import LoadingAnimation from './loading-animation';
+import type { AiActivityStep } from '@/types/ai-activity';
+import { type ChatStatus, type GenerateSpeechFn, type UIMessage } from '@/types/chat';
 import { FileModel } from '@shared/db/schema';
 import { WebSource } from '@shared/db/types';
+import { AiActivityPanel } from './activity/ai-activity';
+import { ChatBox, type PendingFileModel } from './chat-box';
+import LoadingAnimation from './loading-animation';
 
 // Re-export for consumers that import from this file
 export type { ChatStatus, PendingFileModel };
@@ -18,6 +20,11 @@ interface MessagesProps {
   fileMapping?: Map<string, FileModel[]>;
   pendingFileMapping?: Map<string, PendingFileModel[]>;
   webSourceMapping?: Map<string, WebSource[]>;
+  activitySteps?: AiActivityStep[];
+  showActivityDialog?: boolean;
+  generateSpeechFn: GenerateSpeechFn;
+  isSpeechModelEnabled: boolean;
+  speechOnly: boolean;
 }
 
 export function Messages({
@@ -31,28 +38,41 @@ export function Messages({
   fileMapping,
   pendingFileMapping,
   webSourceMapping,
-}: MessagesProps) {
+  activitySteps = [],
+  showActivityDialog = false,
+  generateSpeechFn,
+  isSpeechModelEnabled,
+  speechOnly,
+}: MessagesProps): React.JSX.Element {
+  const canRegenerateMessage = messages.some((message) => message.role === 'user');
+
   return (
     <div className={containerClassName}>
       {messages.map((message, index) => (
         <ChatBox
           key={index}
           index={index}
+          message={message}
           fileMapping={fileMapping}
           pendingFileMapping={pendingFileMapping}
           isLastNonUser={index === messages.length - 1 && message.role !== 'user'}
           isLoading={isLoading}
           regenerateMessage={reload}
+          canRegenerateMessage={canRegenerateMessage}
           conversationId={conversationId}
           assistantIcon={assistantIcon}
           webSources={message.role === 'user' ? webSourceMapping?.get(message.id) : undefined}
           status={status}
-        >
-          {message}
-        </ChatBox>
+          showActivityDialog={showActivityDialog}
+          generateSpeechFn={generateSpeechFn}
+          isSpeechModelEnabled={isSpeechModelEnabled}
+          speechOnly={speechOnly}
+        />
       ))}
-
-      {isLoading && <LoadingAnimation />}
+      {isLoading && <LoadingAnimation activitySteps={activitySteps} />}
+      {isLoading && !showActivityDialog && activitySteps.length > 0 && (
+        <AiActivityPanel steps={activitySteps} panelId="live-ai-activity" />
+      )}
     </div>
   );
 }

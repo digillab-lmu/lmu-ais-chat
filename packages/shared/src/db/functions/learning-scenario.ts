@@ -1,31 +1,43 @@
+import { UserModel } from '@shared/auth/user-model';
+import { NotFoundError } from '@shared/error';
+import { SHARE_EXTENSION_WINDOW_MS } from '@shared/sharing/const';
 import {
   and,
   arrayOverlaps,
   desc,
   eq,
   getTableColumns,
+  gte,
   inArray,
   isNull,
   or,
   sql,
 } from 'drizzle-orm';
-import { NotFoundError } from '@shared/error';
 import { db } from '..';
 import {
-  fileTable,
+  conversationTable,
+  FilterGroup,
   LearningScenarioFileMapping,
   LearningScenarioOptionalShareDataModel,
   LearningScenarioSelectModel,
   learningScenarioTable,
   learningScenarioTemplateMappingTable,
   LearningScenarioWithShareDataModel,
-  SharedLearningScenarioSelectModel,
   sharedLearningScenarioTable,
   sharedLearningScenarioUsageTracking,
   SharedLearningScenarioUsageTrackingInsertModel,
   userTable,
 } from '../schema';
-import { UserModel } from '@shared/auth/user-model';
+import { PgTransactionObject } from '../types';
+import { dbDeleteFileIfUnreferenced } from './files';
+
+type IncludeDeletedOption = {
+  includeDeleted?: boolean;
+};
+
+function excludeDeletedLearningScenarios(options?: IncludeDeletedOption) {
+  return options?.includeDeleted ? undefined : eq(learningScenarioTable.isDeleted, false);
+}
 
 /**
  * Returns a subquery that selects only the single latest non-expired share per learning scenario
@@ -79,6 +91,32 @@ function latestLearningScenarioShare(
     .as('latest_share');
 }
 
+/**
+ * Returns a subquery that selects the single most-recent non-manually-stopped share per learning
+ * scenario for a given user. This includes shares that have already expired, so the caller has
+ * to decide if it is still available (grace window) or already expired.
+ */
+function latestNonStoppedLearningScenarioShare(
+  user: Pick<UserModel, 'id'>,
+): ReturnType<typeof latestActiveLearningScenarioShare> {
+  return db
+    .selectDistinctOn([sharedLearningScenarioTable.learningScenarioId], {
+      ...getTableColumns(sharedLearningScenarioTable),
+    })
+    .from(sharedLearningScenarioTable)
+    .where(
+      and(
+        eq(sharedLearningScenarioTable.userId, user.id),
+        isNull(sharedLearningScenarioTable.manuallyStoppedAt),
+      ),
+    )
+    .orderBy(
+      sharedLearningScenarioTable.learningScenarioId,
+      desc(sharedLearningScenarioTable.startedAt),
+    )
+    .as('latest_share');
+}
+
 function baseLearningScenarioQuery() {
   return db
     .select({
@@ -110,9 +148,10 @@ function baseLearningScenarioWithShareQuery(
 
 export function dbGetGlobalLearningScenarios({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id' | 'federalStateId'>;
-}): Promise<LearningScenarioOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<LearningScenarioOptionalShareDataModel[]> {
   const activeShare = latestActiveLearningScenarioShare(user);
   return baseLearningScenarioWithShareQuery(activeShare)
     .leftJoin(activeShare, eq(activeShare.learningScenarioId, learningScenarioTable.id))
@@ -122,10 +161,11 @@ export function dbGetGlobalLearningScenarios({
     )
     .where(
       and(
-        eq(learningScenarioTable.accessLevel, 'global'),
+        eq(learningScenarioTable.isGlobal, true),
         user.federalStateId
           ? eq(learningScenarioTemplateMappingTable.federalStateId, user.federalStateId)
           : undefined,
+        excludeDeletedLearningScenarios({ includeDeleted }),
       ),
     )
     .orderBy(desc(learningScenarioTable.createdAt));
@@ -142,9 +182,10 @@ export function dbGetGlobalLearningScenarios({
  */
 export async function dbGetLearningScenariosByAssociatedSchools({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id' | 'schoolIds'>;
-}): Promise<LearningScenarioOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<LearningScenarioOptionalShareDataModel[]> {
   // Get all users who share at least one school with the requesting user
   if (user.schoolIds.length === 0) {
     return [];
@@ -155,8 +196,9 @@ export async function dbGetLearningScenariosByAssociatedSchools({
     .leftJoin(activeShare, eq(activeShare.learningScenarioId, learningScenarioTable.id))
     .where(
       and(
-        eq(learningScenarioTable.accessLevel, 'school'),
+        eq(learningScenarioTable.isSchoolShared, true),
         arrayOverlaps(userTable.schoolIds, user.schoolIds),
+        excludeDeletedLearningScenarios({ includeDeleted }),
       ),
     )
     .orderBy(desc(learningScenarioTable.createdAt));
@@ -164,28 +206,38 @@ export async function dbGetLearningScenariosByAssociatedSchools({
 
 export async function dbGetCommunityLearningScenarios({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id'>;
-}): Promise<LearningScenarioOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<LearningScenarioOptionalShareDataModel[]> {
   const activeShare = latestActiveLearningScenarioShare(user);
   return baseLearningScenarioWithShareQuery(activeShare)
     .leftJoin(activeShare, eq(activeShare.learningScenarioId, learningScenarioTable.id))
-    .where(eq(learningScenarioTable.accessLevel, 'community'))
+    .where(
+      and(
+        eq(learningScenarioTable.isCommunityShared, true),
+        excludeDeletedLearningScenarios({ includeDeleted }),
+      ),
+    )
     .orderBy(desc(learningScenarioTable.createdAt));
 }
 
 export async function dbGetLearningScenariosByUser({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id'>;
-}): Promise<LearningScenarioOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<LearningScenarioOptionalShareDataModel[]> {
   const activeShare = latestActiveLearningScenarioShare(user);
   return baseLearningScenarioWithShareQuery(activeShare)
     .leftJoin(activeShare, eq(activeShare.learningScenarioId, learningScenarioTable.id))
     .where(
       and(
         eq(learningScenarioTable.userId, user.id),
-        eq(learningScenarioTable.accessLevel, 'private'),
+        eq(learningScenarioTable.isSchoolShared, false),
+        eq(learningScenarioTable.isCommunityShared, false),
+        eq(learningScenarioTable.isGlobal, false),
+        excludeDeletedLearningScenarios({ includeDeleted }),
       ),
     )
     .orderBy(desc(learningScenarioTable.createdAt));
@@ -199,21 +251,28 @@ export async function dbGetLearningScenariosByUser({
  */
 export async function dbGetAllLearningScenariosByUser({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id'>;
-}): Promise<LearningScenarioOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<LearningScenarioOptionalShareDataModel[]> {
   const activeShare = latestActiveLearningScenarioShare(user);
   return baseLearningScenarioWithShareQuery(activeShare)
     .leftJoin(activeShare, eq(activeShare.learningScenarioId, learningScenarioTable.id))
-    .where(eq(learningScenarioTable.userId, user.id))
+    .where(
+      and(
+        eq(learningScenarioTable.userId, user.id),
+        excludeDeletedLearningScenarios({ includeDeleted }),
+      ),
+    )
     .orderBy(desc(learningScenarioTable.createdAt));
 }
 
 export async function dbGetAllAccessibleLearningScenarios({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id' | 'schoolIds' | 'federalStateId'>;
-}): Promise<LearningScenarioOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<LearningScenarioOptionalShareDataModel[]> {
   const activeShare = latestActiveLearningScenarioShare(user);
   return baseLearningScenarioWithShareQuery(activeShare)
     .leftJoin(activeShare, eq(activeShare.learningScenarioId, learningScenarioTable.id))
@@ -222,22 +281,27 @@ export async function dbGetAllAccessibleLearningScenarios({
       eq(learningScenarioTemplateMappingTable.learningScenarioId, learningScenarioTable.id),
     )
     .where(
-      or(
-        and(
-          eq(learningScenarioTable.userId, user.id),
-          eq(learningScenarioTable.accessLevel, 'private'),
+      and(
+        or(
+          and(
+            eq(learningScenarioTable.userId, user.id),
+            eq(learningScenarioTable.isSchoolShared, false),
+            eq(learningScenarioTable.isCommunityShared, false),
+            eq(learningScenarioTable.isGlobal, false),
+          ),
+          user.schoolIds.length > 0
+            ? and(
+                eq(learningScenarioTable.isSchoolShared, true),
+                arrayOverlaps(userTable.schoolIds, user.schoolIds),
+              )
+            : undefined,
+          eq(learningScenarioTable.isCommunityShared, true),
+          and(
+            eq(learningScenarioTable.isGlobal, true),
+            eq(learningScenarioTemplateMappingTable.federalStateId, user.federalStateId),
+          ),
         ),
-        user.schoolIds.length > 0
-          ? and(
-              eq(learningScenarioTable.accessLevel, 'school'),
-              arrayOverlaps(userTable.schoolIds, user.schoolIds),
-            )
-          : undefined,
-        eq(learningScenarioTable.accessLevel, 'community'),
-        and(
-          eq(learningScenarioTable.accessLevel, 'global'),
-          eq(learningScenarioTemplateMappingTable.federalStateId, user.federalStateId),
-        ),
+        excludeDeletedLearningScenarios({ includeDeleted }),
       ),
     )
     .orderBy(desc(learningScenarioTable.createdAt));
@@ -249,58 +313,108 @@ export async function dbGetAllAccessibleLearningScenarios({
  */
 export async function dbGetLearningScenarioById({
   learningScenarioId,
+  includeDeleted,
 }: {
   learningScenarioId: string;
-}) {
+} & IncludeDeletedOption) {
   const [learningScenario] = await baseLearningScenarioQuery().where(
-    eq(learningScenarioTable.id, learningScenarioId),
+    and(
+      eq(learningScenarioTable.id, learningScenarioId),
+      excludeDeletedLearningScenarios({ includeDeleted }),
+    ),
   );
+  return learningScenario;
+}
+
+export async function dbGetLearningScenarioByIdForConversation({
+  learningScenarioId,
+  conversationId,
+  userId,
+}: {
+  learningScenarioId: string;
+  conversationId: string;
+  userId: string;
+}): Promise<LearningScenarioSelectModel | undefined> {
+  const [learningScenario] = await baseLearningScenarioQuery()
+    .innerJoin(
+      conversationTable,
+      eq(conversationTable.learningScenarioId, learningScenarioTable.id),
+    )
+    .where(
+      and(
+        eq(learningScenarioTable.id, learningScenarioId),
+        eq(conversationTable.id, conversationId),
+        eq(conversationTable.userId, userId),
+        isNull(conversationTable.deletedAt),
+      ),
+    );
   return learningScenario;
 }
 
 export async function dbGetLearningScenariosByIds({
   learningScenarioIds,
+  includeDeleted,
 }: {
   learningScenarioIds: string[];
-}): Promise<LearningScenarioSelectModel[]> {
+} & IncludeDeletedOption): Promise<LearningScenarioSelectModel[]> {
   if (learningScenarioIds.length === 0) {
     return [];
   }
 
-  return baseLearningScenarioQuery().where(inArray(learningScenarioTable.id, learningScenarioIds));
+  return baseLearningScenarioQuery().where(
+    and(
+      inArray(learningScenarioTable.id, learningScenarioIds),
+      excludeDeletedLearningScenarios({ includeDeleted }),
+    ),
+  );
 }
 
 /**
  * Needs userId because the metadata for shared learning scenarios is both tied to the user and learning scenario,
  * this is especially important for shared learning scenarios (school wide or global).
  *
- * Returns undefined if the learning scenario does not exist or is not shared by the user
+ * Returns the latest share data even if expired, as long as it hasn't been manually stopped.
+ * The service layer (getSharedLearningScenario) is responsible for validating the grace window.
+ *
+ * Returns undefined if the learning scenario does not exist or has no non-manually-stopped shares
  */
 export async function dbGetLearningScenarioByIdWithShareData({
   learningScenarioId,
   user,
+  includeDeleted,
 }: {
   learningScenarioId: string;
   user: Pick<UserModel, 'id'>;
-}): Promise<LearningScenarioWithShareDataModel | undefined> {
-  const activeShare = latestActiveLearningScenarioShare(user);
-  const [row] = await baseLearningScenarioWithShareQuery(activeShare)
-    .innerJoin(activeShare, eq(activeShare.learningScenarioId, learningScenarioTable.id))
-    .where(eq(learningScenarioTable.id, learningScenarioId));
+} & IncludeDeletedOption): Promise<LearningScenarioWithShareDataModel | undefined> {
+  const latestShare = latestNonStoppedLearningScenarioShare(user);
+  const [row] = await baseLearningScenarioWithShareQuery(latestShare)
+    .innerJoin(latestShare, eq(latestShare.learningScenarioId, learningScenarioTable.id))
+    .where(
+      and(
+        eq(learningScenarioTable.id, learningScenarioId),
+        excludeDeletedLearningScenarios({ includeDeleted }),
+      ),
+    );
   return row;
 }
 
 export async function dbGetLearningScenarioByIdOptionalShareData({
   learningScenarioId,
   user,
+  includeDeleted,
 }: {
   learningScenarioId: string;
   user: Pick<UserModel, 'id'>;
-}): Promise<LearningScenarioOptionalShareDataModel | undefined> {
+} & IncludeDeletedOption): Promise<LearningScenarioOptionalShareDataModel | undefined> {
   const latestShare = latestLearningScenarioShare(user);
   const [row] = await baseLearningScenarioWithShareQuery(latestShare)
     .leftJoin(latestShare, eq(latestShare.learningScenarioId, learningScenarioTable.id))
-    .where(eq(learningScenarioTable.id, learningScenarioId));
+    .where(
+      and(
+        eq(learningScenarioTable.id, learningScenarioId),
+        excludeDeletedLearningScenarios({ includeDeleted }),
+      ),
+    );
   return row;
 }
 
@@ -310,10 +424,11 @@ export async function dbGetLearningScenarioByIdOptionalShareData({
 export async function dbGetLearningScenarioByIdAndInviteCode({
   learningScenarioId,
   inviteCode,
+  includeDeleted,
 }: {
   learningScenarioId: string;
   inviteCode: string;
-}): Promise<LearningScenarioWithShareDataModel | undefined> {
+} & IncludeDeletedOption): Promise<LearningScenarioWithShareDataModel | undefined> {
   const [row] = await db
     .select({
       ...getTableColumns(learningScenarioTable),
@@ -335,7 +450,12 @@ export async function dbGetLearningScenarioByIdAndInviteCode({
         eq(sharedLearningScenarioTable.inviteCode, inviteCode),
       ),
     )
-    .where(eq(learningScenarioTable.id, learningScenarioId));
+    .where(
+      and(
+        eq(learningScenarioTable.id, learningScenarioId),
+        excludeDeletedLearningScenarios({ includeDeleted }),
+      ),
+    );
 
   return row;
 }
@@ -380,12 +500,12 @@ export async function dbDeleteLearningScenarioByIdAndUser({
     await tx
       .delete(LearningScenarioFileMapping)
       .where(eq(LearningScenarioFileMapping.learningScenarioId, learningScenario.id));
-    await tx.delete(fileTable).where(
-      inArray(
-        fileTable.id,
-        relatedFiles.map((f) => f.id),
-      ),
-    );
+    const deletedFileIds: string[] = [];
+    for (const { id } of relatedFiles) {
+      if (await dbDeleteFileIfUnreferenced(tx, id)) {
+        deletedFileIds.push(id);
+      }
+    }
     const [deletedLearningScenario] = await tx
       .delete(learningScenarioTable)
       .where(
@@ -399,27 +519,126 @@ export async function dbDeleteLearningScenarioByIdAndUser({
     if (deletedLearningScenario === undefined) {
       throw new Error('Could not delete learning scenario');
     }
-    return deletedLearningScenario;
+    return { deletedLearningScenario, deletedFileIds };
   });
 
   return deletedLearningScenario;
 }
 
 /**
- * Returns all active (non-stopped, non-expired) shared learning scenarios for a given learning scenario and user.
+ * Returns the latest manageable share for a learning scenario owned/started by the given user,
+ * or `null` when none exists.
+ *
+ * A share is "manageable" when it has not been manually stopped and its expiration is
+ * still within the grace window (`SHARE_EXTENSION_WINDOW_MS`) — i.e. it is either still
+ * running or expired recently enough that it can still be extended or adjusted.
  */
-export function dbGetSharedLearningScenarioConversations({
+export async function dbGetLatestManageableLearningScenarioShare({
   learningScenarioId,
   user,
 }: {
   learningScenarioId: string;
   user: Pick<UserModel, 'id'>;
-}): Promise<SharedLearningScenarioSelectModel[]> {
-  const activeShare = latestActiveLearningScenarioShare(user);
-  return db
+}) {
+  const graceWindowStart = new Date(Date.now() - SHARE_EXTENSION_WINDOW_MS);
+
+  const [share] = await db
     .select()
-    .from(activeShare)
-    .where(eq(activeShare.learningScenarioId, learningScenarioId));
+    .from(sharedLearningScenarioTable)
+    .where(
+      and(
+        eq(sharedLearningScenarioTable.learningScenarioId, learningScenarioId),
+        eq(sharedLearningScenarioTable.userId, user.id),
+        isNull(sharedLearningScenarioTable.manuallyStoppedAt),
+        gte(sharedLearningScenarioTable.expiredAt, graceWindowStart),
+      ),
+    )
+    .orderBy(desc(sharedLearningScenarioTable.startedAt))
+    .limit(1);
+
+  return share ?? null;
+}
+
+/**
+ * Marks a learning scenario share as manually stopped.
+ * Returns `null` if the share does not exist.
+ */
+export async function dbStopLearningScenarioShare({ shareId }: { shareId: string }) {
+  const [updatedShare] = await db
+    .update(sharedLearningScenarioTable)
+    .set({ manuallyStoppedAt: new Date() })
+    .where(eq(sharedLearningScenarioTable.id, shareId))
+    .returning();
+
+  return updatedShare ?? null;
+}
+
+/**
+ * Extends the expiration timestamp of the latest manageable learning scenario share for the given user.
+ * Respects the grace window, so a share that expired recently can still be extended.
+ * Returns `null` if no manageable share exists.
+ */
+export async function dbExtendSharedLearningScenarioExpiration({
+  learningScenarioId,
+  user,
+  additionalTimeInMinutes,
+}: {
+  learningScenarioId: string;
+  user: Pick<UserModel, 'id'>;
+  additionalTimeInMinutes: number;
+}) {
+  const latestManageableShare = await dbGetLatestManageableLearningScenarioShare({
+    learningScenarioId,
+    user,
+  });
+
+  if (!latestManageableShare) {
+    return null;
+  }
+
+  const now = new Date();
+  const baseDate = latestManageableShare.expiredAt > now ? latestManageableShare.expiredAt : now;
+  const newExpiredAt = new Date(baseDate.getTime() + additionalTimeInMinutes * 60 * 1000);
+
+  const [updatedShare] = await db
+    .update(sharedLearningScenarioTable)
+    .set({ expiredAt: newExpiredAt })
+    .where(eq(sharedLearningScenarioTable.id, latestManageableShare.id))
+    .returning();
+
+  return updatedShare;
+}
+
+/**
+ * Updates the token points limit of the latest manageable learning scenario share for the given user.
+ * Respects the grace window, so a share that expired recently can still be adjusted.
+ * Returns `null` if no manageable share exists.
+ */
+export async function dbUpdateLearningScenarioShareTokenPointsLimit({
+  learningScenarioId,
+  user,
+  tokenPointsLimit,
+}: {
+  learningScenarioId: string;
+  user: Pick<UserModel, 'id'>;
+  tokenPointsLimit: number;
+}) {
+  const latestManageableShare = await dbGetLatestManageableLearningScenarioShare({
+    learningScenarioId,
+    user,
+  });
+
+  if (!latestManageableShare) {
+    return null;
+  }
+
+  const [updatedShare] = await db
+    .update(sharedLearningScenarioTable)
+    .set({ tokenPointsLimit })
+    .where(eq(sharedLearningScenarioTable.id, latestManageableShare.id))
+    .returning();
+
+  return updatedShare;
 }
 
 /**
@@ -466,7 +685,9 @@ export async function dbSetLearningScenarioSuspended({
     .update(learningScenarioTable)
     .set({
       suspended: true,
-      accessLevel: 'private',
+      isSchoolShared: false,
+      isCommunityShared: false,
+      isGlobal: false,
       hasLinkAccess: false,
     })
     .where(eq(learningScenarioTable.id, learningScenarioId))
@@ -478,6 +699,7 @@ export async function dbSetLearningScenarioSuspended({
 
   const learningScenario = await dbGetLearningScenarioById({
     learningScenarioId: updatedLearningScenario.id,
+    includeDeleted: true,
   });
   if (!learningScenario) {
     throw new NotFoundError('Learning scenario not found');
@@ -503,10 +725,85 @@ export async function dbLiftSuspensionOnLearningScenario({
 
   const learningScenario = await dbGetLearningScenarioById({
     learningScenarioId: updatedLearningScenario.id,
+    includeDeleted: true,
   });
   if (!learningScenario) {
     throw new NotFoundError('Learning scenario not found');
   }
 
   return learningScenario;
+}
+
+export async function dbUpdateLearningScenarioFilterGroup({
+  learningScenarioId,
+  filterGroup: updatedFilterGroup,
+}: {
+  learningScenarioId: string;
+  filterGroup: FilterGroup;
+}): Promise<void> {
+  await db
+    .update(learningScenarioTable)
+    .set({ filterGroup: updatedFilterGroup })
+    .where(eq(learningScenarioTable.id, learningScenarioId));
+}
+
+/**
+ * Updates whether a learning scenario is community-shared, within the given transaction.
+ * Only called from the community-template-request workflow (approve/cancel), never directly
+ * from the owner-facing update path.
+ */
+export async function dbUpdateLearningScenarioCommunityShared(
+  learningScenarioId: string,
+  isCommunityShared: boolean,
+  tx: PgTransactionObject,
+): Promise<void> {
+  const [updatedLearningScenario] = await tx
+    .update(learningScenarioTable)
+    .set({ isCommunityShared })
+    .where(eq(learningScenarioTable.id, learningScenarioId))
+    .returning({ id: learningScenarioTable.id });
+
+  if (!updatedLearningScenario) {
+    throw new NotFoundError('Learning scenario not found');
+  }
+}
+
+/**
+ * Forces hasLinkAccess on for a learning scenario within the given transaction (admin needs
+ * link access to review a submitted community template request).
+ */
+export async function dbUpdateLearningScenarioHasLinkAccess(
+  learningScenarioId: string,
+  hasLinkAccess: boolean,
+  tx: PgTransactionObject,
+): Promise<void> {
+  const [updatedLearningScenario] = await tx
+    .update(learningScenarioTable)
+    .set({ hasLinkAccess })
+    .where(eq(learningScenarioTable.id, learningScenarioId))
+    .returning({ id: learningScenarioTable.id });
+
+  if (!updatedLearningScenario) {
+    throw new NotFoundError('Learning scenario not found');
+  }
+}
+
+/**
+ * Forces isSchoolShared on for a learning scenario within the given transaction (community
+ * sharing includes school sharing).
+ */
+export async function dbUpdateLearningScenarioSchoolShared(
+  learningScenarioId: string,
+  isSchoolShared: boolean,
+  tx: PgTransactionObject,
+): Promise<void> {
+  const [updatedLearningScenario] = await tx
+    .update(learningScenarioTable)
+    .set({ isSchoolShared })
+    .where(eq(learningScenarioTable.id, learningScenarioId))
+    .returning({ id: learningScenarioTable.id });
+
+  if (!updatedLearningScenario) {
+    throw new NotFoundError('Learning scenario not found');
+  }
 }

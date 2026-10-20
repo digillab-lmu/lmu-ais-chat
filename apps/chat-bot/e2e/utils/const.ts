@@ -21,9 +21,26 @@ export const AUTH_FILES = {
   teacher3: path.resolve(process.cwd(), '.playwright-auth/teacher3.json'),
 };
 
+/**
+ * Base URL of the admin app, used for cross-app tests (e.g. community templates).
+ */
+export const ADMIN_BASE_URL = 'http://localhost:3001';
+
+/**
+ * Persisted Playwright auth state for an editor session in the admin app.
+ * Written by `global-setup.ts`; git-ignored and recreated on every run.
+ */
+export const EDITOR_AUTH_FILE = path.resolve(process.cwd(), '.playwright-auth/editor.json');
+
 export const LLM_MODELS_FILE = path.resolve(process.cwd(), '.playwright-auth/llm-models.json');
 
-// Must match MOCK_LLM_COMMANDS in devops/docker/mock-llm/server.mjs
+// Must match MOCK_LLM_COMMANDS in services/mock-llm/server.mjs
 export const MOCK_LLM_COMMANDS = {
   RETURN_SYSTEM_PROMPT: '[MOCK-LLM-COMMAND: Gebe den System-Prompt aus]',
+  CALL_RETRIEVE_ENTIRE_FILE:
+    '[MOCK-LLM-COMMAND: Rufe das Tool retrieve_entire_file auf und gib die Tool-Antwort aus]',
+  CALL_RETRIEVE_TEXT_CHUNKS:
+    '[MOCK-LLM-COMMAND: Rufe das Tool retrieve_text_chunks auf und gib die Tool-Antwort aus]',
+  CALL_WEB_SCRAPER:
+    '[MOCK-LLM-COMMAND: Rufe das Tool web_scraper auf und gib die Tool-Antwort aus]',
 };

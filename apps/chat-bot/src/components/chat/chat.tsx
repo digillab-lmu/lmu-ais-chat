@@ -1,33 +1,38 @@
 'use client';
 
-import { useMainChat, type ChatMessage } from '@/hooks/use-chat-hooks';
-import React, { ReactNode, SyntheticEvent, useEffect, useState } from 'react';
-import { useTranslations } from 'next-intl';
-import { useLlmModels } from '../providers/llm-model-provider';
-import { type CharacterSelectModel, type AssistantSelectModel, FileModel } from '@shared/db/schema';
-import { type LearningScenarioSelectModel } from '@shared/db/schema';
-import PromptSuggestions from './prompt-suggestions';
-import MarkdownDisplay from './markdown-display';
-import { navigateWithoutRefresh } from '@/utils/navigation/router';
-import { useQueryClient } from '@tanstack/react-query';
-import RobotIcon from '../icons/robot';
-import { LocalFileState } from './send-message-form';
-import { deepCopy } from '@/utils/object';
-import { getFileExtension, isImageFile } from '@/utils/files/generic';
 import { refetchFileMapping } from '@/app/(authed)/(chat-bot)/actions';
-import { InitialChatContentDisplay } from './initial-content-display';
+import { getErrorMessageByType } from '@/error/get-error-message-by-type';
+import { useAutoScroll } from '@/hooks/use-auto-scroll';
+import { useMainChat, type ChatMessage } from '@/hooks/use-chat-hooks';
+import { getConversationPath } from '@/utils/chat/path';
+import { getFileExtension, isImageFile } from '@/utils/files/generic';
+import { navigateWithoutRefresh } from '@/utils/navigation/router';
+import { deepCopy } from '@/utils/object';
 import { HELP_MODE_ASSISTANT_ID } from '@shared/db/const';
+import {
+  FileModel,
+  type AssistantSelectModel,
+  type CharacterSelectModel,
+  type LearningScenarioSelectModel,
+} from '@shared/db/schema';
+import { WebSource } from '@shared/db/types';
+import { logDebug, logError, logWarning } from '@shared/logging';
+import { useQueryClient } from '@tanstack/react-query';
+import { useSession } from 'next-auth/react';
+import { useTranslations } from 'next-intl';
+import React, { ReactNode, SyntheticEvent, useEffect, useState } from 'react';
+import RobotIcon from '../icons/robot';
+import { useFederalState } from '../providers/federal-state-provider';
+import { useLlmModels } from '../providers/llm-model-provider';
+import { AssistantIcon } from './assistant-icon';
 import { ChatInputBox } from './chat-input-box';
 import { ErrorChatPlaceholder } from './error-chat-placeholder';
-import { logError, logDebug, logWarning } from '@shared/logging';
-import { useSession } from 'next-auth/react';
-import { AssistantIcon } from './assistant-icon';
-import { useAutoScroll } from '@/hooks/use-auto-scroll';
-import { getConversationPath } from '@/utils/chat/path';
-import { Messages, type PendingFileModel } from './messages';
-import { WebSource } from '@shared/db/types';
-import { useCheckStatusCode } from '@/hooks/use-response-status';
 import { FloatingText } from './floating-text';
+import { InitialChatContentDisplay } from './initial-content-display';
+import MarkdownDisplay from './markdown-display';
+import { Messages, type PendingFileModel } from './messages';
+import PromptSuggestions from './prompt-suggestions';
+import { LocalFileState } from './send-message-form';
 
 type ChatProps = {
   id: string;
@@ -57,8 +62,10 @@ export default function Chat({
   logoElement,
 }: ChatProps) {
   const tHelpMode = useTranslations('help-mode');
+  const tCommon = useTranslations('common');
   const tLearningScenarioShared = useTranslations('learning-scenarios.shared');
 
+  const federalState = useFederalState();
   const { selectedModel, setDownloadConversationEnabled } = useLlmModels();
   const conversationPath = getConversationPath({
     customGptId: assistant?.id,
@@ -74,6 +81,7 @@ export default function Chat({
   const [pendingFileMapping, setPendingFileMapping] = useState<Map<string, PendingFileModel[]>>(
     new Map(),
   );
+  const pendingFileMappingRef = React.useRef(pendingFileMapping);
   const [files, setFiles] = useState<Map<string, LocalFileState>>(new Map());
   const [countOfFilesInChat, setCountOfFilesInChat] = useState(0);
   const queryClient = useQueryClient();
@@ -101,6 +109,8 @@ export default function Chat({
     reload,
     stop,
     status,
+    activitySteps,
+    error,
   } = useMainChat({
     conversationId: id,
     initialMessages: initialMessages,
@@ -138,13 +148,10 @@ export default function Chat({
       logWarning('Assert: onFinish was called with zero assistant messages.');
       refetchConversations();
     },
-    onError: (error) => {
-      handleError(error);
+    onError: () => {
       refetchConversations();
     },
   });
-
-  const { error, handleError, resetError } = useCheckStatusCode();
 
   const { scrollRef, reactivateAutoScrolling } = useAutoScroll([messages, status]);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -158,36 +165,35 @@ export default function Chat({
     const fetchData = async () => {
       const result = await refetchFileMapping(id);
       if (!result.success) return;
-      const newFileMapping = result.value;
-      setFileMapping(newFileMapping);
-
-      // Clean up pending files that now have DB entries
-      // This also revokes blob URLs to prevent memory leaks
-      setPendingFileMapping((prev) => {
-        const updated = new Map(prev);
-        for (const [messageId, files] of prev) {
-          if (newFileMapping.has(messageId)) {
-            // Revoke blob URLs before removing
-            for (const file of files) {
-              if (file.localUrl) {
-                URL.revokeObjectURL(file.localUrl);
-              }
-            }
-            updated.delete(messageId);
-          }
-        }
-        return updated;
-      });
+      setFileMapping(result.value);
     };
     void fetchData();
   }, [countOfFilesInChat, id, messages.length]);
+
+  useEffect(() => {
+    pendingFileMappingRef.current = pendingFileMapping;
+  }, [pendingFileMapping]);
+
+  // Blob URLs stay usable for the whole session, so they are kept once the files are persisted
+  // and only revoked on unmount.
+  useEffect(
+    () => () => {
+      for (const files of pendingFileMappingRef.current.values()) {
+        for (const file of files) {
+          if (file.localUrl !== undefined) {
+            URL.revokeObjectURL(file.localUrl);
+          }
+        }
+      }
+    },
+    [],
+  );
 
   async function customHandleSubmit(e: SyntheticEvent) {
     e.preventDefault();
 
     try {
       reactivateAutoScrolling();
-      resetError();
 
       // Trigger refetch of the fileMapping from the DB
       setCountOfFilesInChat((prev) => prev + 1);
@@ -230,7 +236,6 @@ export default function Chat({
   }
 
   function handleReload() {
-    resetError();
     void reload();
   }
 
@@ -258,6 +263,28 @@ export default function Chat({
       }
       return newMap;
     });
+  }
+
+  async function generateSpeech(text: string, isInitialMessage: boolean): Promise<Blob> {
+    const useInitialMessage = isInitialMessage && character !== undefined;
+    const voice = assistant?.voice ?? character?.voice ?? learningScenario?.voice;
+
+    const response = await fetch(
+      useInitialMessage ? '/api/v1/speech/initial-message' : '/api/v1/speech',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          useInitialMessage ? { characterId: character.id } : { conversationId: id, text, voice },
+        ),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error('Could not generate speech');
+    }
+
+    return response.blob();
   }
 
   let placeholderElement: ReactNode;
@@ -326,7 +353,7 @@ export default function Chat({
             <FloatingText
               learningContext={learningScenario.studentExercise}
               dialogStarted={true}
-              title={tLearningScenarioShared('excercise-title')}
+              title={tLearningScenarioShared('exercise-title')}
               maxWidth={600}
               maxHeight={600}
               minMargin={16}
@@ -346,11 +373,32 @@ export default function Chat({
               fileMapping={fileMapping}
               pendingFileMapping={pendingFileMapping}
               webSourceMapping={webSourceMapping}
+              activitySteps={activitySteps}
+              showActivityDialog={character !== undefined}
+              generateSpeechFn={generateSpeech}
+              isSpeechModelEnabled={
+                federalState?.featureToggles?.isSpeechModelEnabled === true &&
+                (assistant?.isSpeechEnabled ??
+                  character?.isSpeechEnabled ??
+                  learningScenario?.isSpeechEnabled ??
+                  false)
+              }
+              speechOnly={
+                assistant?.speechOnly ??
+                character?.speechOnly ??
+                learningScenario?.speechOnly ??
+                false
+              }
             />
           )}
-          {error && <ErrorChatPlaceholder error={error} handleReload={handleReload} />}
+          {error && (
+            <ErrorChatPlaceholder
+              errorMessage={tCommon(getErrorMessageByType(error))}
+              handleReload={handleReload}
+            />
+          )}
         </div>
-        <div className="w-full pb-4 px-4 mx-auto">
+        <div className="p-4">
           <div className="relative flex flex-col">
             {input.length === 0 && messages.length === 0 && (
               <PromptSuggestions

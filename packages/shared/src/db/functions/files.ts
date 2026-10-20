@@ -1,4 +1,16 @@
-import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { logDebug } from '@shared/logging';
+import {
+  type SQL,
+  and,
+  asc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNotNull,
+  isNull,
+  notExists,
+  or,
+} from 'drizzle-orm';
 import { db } from '..';
 import {
   AssistantFileMapping,
@@ -13,12 +25,10 @@ import {
   FileInsertModel,
   FileMetadata,
   FileModel,
-  FileModelAndContent,
   fileTable,
   LearningScenarioFileMapping,
   learningScenarioTable,
 } from '../schema';
-import { logDebug } from '@shared/logging';
 
 export async function linkFilesToConversation({
   conversationMessageId,
@@ -32,7 +42,21 @@ export async function linkFilesToConversation({
   if (fileIds.length === 0) return;
   await db
     .insert(ConversationMessageFileMappingTable)
-    .values(fileIds.map((fileId) => ({ conversationMessageId, fileId, conversationId })));
+    .values(fileIds.map((fileId) => ({ conversationMessageId, fileId, conversationId })))
+    .onConflictDoNothing({
+      target: [
+        ConversationMessageFileMappingTable.conversationMessageId,
+        ConversationMessageFileMappingTable.fileId,
+      ],
+    });
+}
+
+export async function dbDetachFilesFromConversationMessages(messageIds: string[]) {
+  if (messageIds.length === 0) return;
+
+  await db
+    .delete(ConversationMessageFileMappingTable)
+    .where(inArray(ConversationMessageFileMappingTable.conversationMessageId, messageIds));
 }
 
 export async function dbVerifyFileOwnership({
@@ -66,6 +90,62 @@ export async function dbVerifyFileOwnership({
     .where(and(eq(fileTable.id, fileId), eq(fileTable.userId, userId)))
     .limit(1);
   return fileResult.length > 0;
+}
+
+export async function dbVerifyFileOwner({
+  fileId,
+  userId,
+}: {
+  fileId: string;
+  userId: string;
+}): Promise<boolean> {
+  const [file] = await db
+    .select({ id: fileTable.id })
+    .from(fileTable)
+    .where(and(eq(fileTable.id, fileId), eq(fileTable.userId, userId)))
+    .limit(1);
+
+  return file !== undefined;
+}
+
+export async function dbDeleteFileIfUnreferenced(
+  tx: Pick<typeof db, 'delete' | 'select'>,
+  fileId: string,
+): Promise<boolean> {
+  const deletedFiles = await tx
+    .delete(fileTable)
+    .where(
+      and(
+        eq(fileTable.id, fileId),
+        notExists(
+          tx
+            .select({ id: CharacterFileMapping.id })
+            .from(CharacterFileMapping)
+            .where(eq(CharacterFileMapping.fileId, fileId)),
+        ),
+        notExists(
+          tx
+            .select({ id: AssistantFileMapping.id })
+            .from(AssistantFileMapping)
+            .where(eq(AssistantFileMapping.fileId, fileId)),
+        ),
+        notExists(
+          tx
+            .select({ id: LearningScenarioFileMapping.id })
+            .from(LearningScenarioFileMapping)
+            .where(eq(LearningScenarioFileMapping.fileId, fileId)),
+        ),
+        notExists(
+          tx
+            .select({ fileId: ConversationMessageFileMappingTable.fileId })
+            .from(ConversationMessageFileMappingTable)
+            .where(eq(ConversationMessageFileMappingTable.fileId, fileId)),
+        ),
+      ),
+    )
+    .returning({ id: fileTable.id });
+
+  return deletedFiles.length > 0;
 }
 
 export async function dbGetRelatedFiles(conversationId: string): Promise<Map<string, FileModel[]>> {
@@ -265,7 +345,7 @@ function convertToMap(
   return resultMap;
 }
 
-export async function dbGetFilesInIds(fileIds: string[]): Promise<FileModelAndContent[]> {
+export async function dbGetFilesInIds(fileIds: string[]): Promise<FileModel[]> {
   const maybeFiles = await db.select().from(fileTable).where(inArray(fileTable.id, fileIds));
   return [...maybeFiles];
 }
@@ -356,6 +436,48 @@ export async function dbChunksExistForSourceUrls(sourceUrls: string[]): Promise<
     .from(chunkTable)
     .where(inArray(chunkTable.sourceUrl, sourceUrls));
   return new Set(results.map((r) => r.sourceUrl).filter((url): url is string => url !== null));
+}
+
+/**
+ * Returns chunks for the given file IDs and/or source URLs,
+ * ordered by fileId, sourceUrl, orderIndex, id.
+ * Pass `limit` to cap the number of rows returned.
+ */
+export async function dbGetAllChunks({
+  fileIds,
+  sourceUrls,
+  limit,
+}: {
+  fileIds: string[];
+  sourceUrls: string[];
+  limit?: number;
+}) {
+  const conditions: SQL[] = [];
+  if (fileIds.length > 0) {
+    conditions.push(inArray(chunkTable.fileId, fileIds));
+  }
+  if (sourceUrls.length > 0) {
+    conditions.push(inArray(chunkTable.sourceUrl, sourceUrls));
+  }
+  if (conditions.length === 0) return [];
+  const query = db
+    .select({
+      fileId: chunkTable.fileId,
+      fileName: fileTable.name,
+      sourceUrl: chunkTable.sourceUrl,
+      orderIndex: chunkTable.orderIndex,
+      content: chunkTable.content,
+    })
+    .from(chunkTable)
+    .leftJoin(fileTable, eq(chunkTable.fileId, fileTable.id))
+    .where(or(...conditions))
+    .orderBy(
+      asc(chunkTable.fileId),
+      asc(chunkTable.sourceUrl),
+      asc(chunkTable.orderIndex),
+      asc(chunkTable.id),
+    );
+  return limit !== undefined ? query.limit(limit) : query;
 }
 
 export async function dbInsertFile(file: FileInsertModel) {

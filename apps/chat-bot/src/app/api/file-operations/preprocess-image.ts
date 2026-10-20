@@ -1,10 +1,10 @@
-import { SUPPORTED_DOCUMENTS_TYPE, TRUNCATE_IMAGE_HEIGHT } from '@/const';
+import { TRUNCATE_IMAGE_HEIGHT } from '@/const';
 import { FileMetadata, FileModel } from '@shared/db/schema';
 import { getFileFromS3, getReadOnlySignedUrl } from '@shared/s3';
 import { isImageFile } from '@/utils/files/generic';
+import { getImageContentType, streamToBase64 } from '@/utils/files/image-data';
 import sharp from 'sharp';
 import { logError } from '@shared/logging';
-import { Readable } from 'stream';
 import { ChatAttachment } from '@ais-chat/ai-core';
 
 export type ChatAttachmentWithMessageId = ChatAttachment & {
@@ -28,6 +28,7 @@ export async function createImageAttachmentsForConversation(
 
   const imagePromises = imageFiles.map(async (file) => {
     let url: string;
+    const contentType = getImageContentType(file.type);
 
     try {
       if (imageAttachmentType === 'url') {
@@ -35,7 +36,7 @@ export async function createImageAttachmentsForConversation(
       } else if (imageAttachmentType === 'base64') {
         const fileStream = await getFileFromS3(`message_attachments/${file.id}`);
         const base64ImageData = await streamToBase64(fileStream);
-        url = `data:image/${file.type};base64,${base64ImageData}`;
+        url = `data:${contentType};base64,${base64ImageData}`;
       } else {
         throw new Error(`Unsupported image attachment type: ${imageAttachmentType}`);
       }
@@ -43,7 +44,7 @@ export async function createImageAttachmentsForConversation(
       return {
         type: 'image' as const,
         url,
-        contentType: `image/${file.type}`,
+        contentType,
         messageId: file.conversationMessageId,
       };
     } catch (error) {
@@ -56,15 +57,39 @@ export async function createImageAttachmentsForConversation(
   return images.filter((img) => img !== undefined);
 }
 
+const DEFAULT_SVG_DENSITY = 72;
+const MAX_SVG_DENSITY = 100_000; // sharp's upper limit for vector rasterisation
+
+/**
+ * sharp rasterises SVGs at their intrinsic size, so small vector graphics can turn into tiny
+ * bitmaps that look blurry when displayed. Increase the density so the largest side is
+ * rasterised up to TRUNCATE_IMAGE_HEIGHT before any further resizing is applied.
+ */
+async function rasterizeSvgToPng(fileContent: Buffer): Promise<Buffer> {
+  const { width, height } = await sharp(fileContent).metadata();
+  const largestSide = Math.max(width ?? 0, height ?? 0);
+  const density =
+    largestSide > 0 && largestSide < TRUNCATE_IMAGE_HEIGHT
+      ? Math.min(
+          Math.round((TRUNCATE_IMAGE_HEIGHT / largestSide) * DEFAULT_SVG_DENSITY),
+          MAX_SVG_DENSITY,
+        )
+      : DEFAULT_SVG_DENSITY;
+
+  return sharp(fileContent, { density }).png().toBuffer();
+}
+
 export async function preprocessImage(
   fileContent: Buffer,
-  type: SUPPORTED_DOCUMENTS_TYPE,
-): Promise<{ buffer: Buffer; metadata: FileMetadata }> {
+  type: string,
+): Promise<{ buffer: Buffer; metadata: FileMetadata; type: string }> {
   // Convert SVG to PNG if needed
   let processedBuffer = fileContent;
+  let processedType = type;
   if (type === 'svg') {
     try {
-      processedBuffer = await sharp(fileContent).png().toBuffer();
+      processedBuffer = await rasterizeSvgToPng(fileContent);
+      processedType = 'png';
     } catch {
       throw new Error('Failed to convert SVG to PNG');
     }
@@ -90,6 +115,7 @@ export async function preprocessImage(
     return {
       buffer: finalBuffer,
       metadata: { width, height },
+      type: processedType,
     };
   }
 
@@ -97,19 +123,8 @@ export async function preprocessImage(
   return {
     buffer: processedBuffer,
     metadata: { width, height },
+    type: processedType,
   };
-}
-
-async function streamToBase64(stream: Readable): Promise<string> {
-  const chunks: Buffer[] = [];
-
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  const buffer = Buffer.concat(chunks);
-
-  return buffer.toString('base64');
 }
 
 // returns true if the file has a conversationMessageId which is needed to

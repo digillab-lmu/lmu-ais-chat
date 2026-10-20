@@ -1,37 +1,108 @@
 'use server';
 
-import { AccessLevel } from '@shared/db/schema';
-import { ShareWithLearnersLimitParams } from '@/components/custom-chat/custom-chat-share-with-learners/custom-chat-share-with-learners-limit-params';
+import { ShareWithLearnersLimitParams } from '@/components/custom-chat/share-with-learners/custom-chat-share-with-learners-limit-params';
 import { requireAuth } from '@/auth/requireAuth';
 import {
   deleteCharacter,
   deleteFileMappingAndEntity,
   downloadFileFromCharacter,
+  extendCharacterShareExpiration,
+  getActiveCharacterShareData,
   linkFileToCharacter,
   shareCharacter,
   unshareCharacter,
+  updateCharacterShareTokenPointsLimit,
   updateCharacter,
-  updateCharacterAccessLevel,
+  updateCharacterSchoolSharing,
   UpdateCharacterActionModel,
   uploadAvatarPictureForCharacter,
 } from '@shared/characters/character-service';
+import {
+  cancelCommunityTemplateRequest,
+  createCommunityTemplateRequest,
+  getEntitySharingState,
+  sendMessageToEditor,
+} from '@shared/community-templates/community-template-service';
 import { runServerAction } from '@shared/actions/run-server-action';
 
-export async function updateCharacterAccessLevelAction({
+export async function createCommunityTemplateRequestAction({
   characterId,
-  accessLevel,
 }: {
   characterId: string;
-  accessLevel: AccessLevel;
 }) {
   const { user } = await requireAuth();
 
   return runServerAction(
-    'updateCharacterAccessLevelAction',
-    updateCharacterAccessLevel,
+    'createCommunityTemplateRequestAction',
+    createCommunityTemplateRequest,
+  )({
+    entityRef: { entityType: 'character', entityId: characterId },
+    user,
+  });
+}
+
+export async function sendMessageToEditorAction({
+  characterId,
+  message,
+}: {
+  characterId: string;
+  message: string;
+}) {
+  const { user } = await requireAuth();
+
+  return runServerAction(
+    'sendMessageToEditorAction',
+    sendMessageToEditor,
+  )({
+    entityRef: { entityType: 'character', entityId: characterId },
+    user,
+    message,
+  });
+}
+
+export async function cancelCommunityTemplateRequestAction({
+  characterId,
+}: {
+  characterId: string;
+}) {
+  const { user } = await requireAuth();
+
+  return runServerAction(
+    'cancelCommunityTemplateRequestAction',
+    cancelCommunityTemplateRequest,
+  )({
+    entityRef: { entityType: 'character', entityId: characterId },
+    user,
+  });
+}
+
+export async function getCharacterSharingStateAction({ characterId }: { characterId: string }) {
+  const { user } = await requireAuth();
+
+  return runServerAction(
+    'getCharacterSharingStateAction',
+    getEntitySharingState,
+  )({
+    entityRef: { entityType: 'character', entityId: characterId },
+    user,
+  });
+}
+
+export async function updateCharacterSchoolSharingAction({
+  characterId,
+  isSchoolShared,
+}: {
+  characterId: string;
+  isSchoolShared: boolean;
+}) {
+  const { user } = await requireAuth();
+
+  return runServerAction(
+    'updateCharacterSchoolSharingAction',
+    updateCharacterSchoolSharing,
   )({
     characterId,
-    accessLevel,
+    isSchoolShared,
     user,
   });
 }
@@ -87,6 +158,57 @@ export async function unshareCharacterAction({ characterId }: { characterId: str
   )({
     characterId,
     user: user,
+  });
+}
+
+export async function extendCharacterShareExpirationAction({
+  characterId,
+  additionalTimeInMinutes,
+}: {
+  characterId: string;
+  additionalTimeInMinutes: number;
+}) {
+  const { user } = await requireAuth();
+
+  return runServerAction(
+    'extendCharacterShareExpirationAction',
+    extendCharacterShareExpiration,
+  )({
+    characterId,
+    additionalTimeInMinutes,
+    user,
+  });
+}
+
+export async function updateCharacterShareTokenPointsLimitAction({
+  characterId,
+  tokenPointsPercentageLimit,
+}: {
+  characterId: string;
+  tokenPointsPercentageLimit: number;
+}) {
+  const { user } = await requireAuth();
+
+  return runServerAction(
+    'updateCharacterShareTokenPointsLimitAction',
+    updateCharacterShareTokenPointsLimit,
+  )({
+    characterId,
+    tokenPointsPercentageLimit,
+    user,
+  });
+}
+
+export async function getCharacterShareDataAction({ characterId }: { characterId: string }) {
+  const { user, federalState } = await requireAuth();
+
+  return runServerAction(
+    'getCharacterShareDataAction',
+    getActiveCharacterShareData,
+  )({
+    characterId,
+    user,
+    federalState,
   });
 }
 

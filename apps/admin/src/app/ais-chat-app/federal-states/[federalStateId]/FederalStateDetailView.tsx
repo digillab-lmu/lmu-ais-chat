@@ -1,16 +1,10 @@
 'use client';
 import { Button } from '@ui/components/button';
+import { ConfirmAlertDialog, useConfirmAlertDialog } from '@ui/components/alert-dialog';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { updateFederalStateAction } from './actions';
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@ui/components/card';
+import { deleteFederalStateAction, updateFederalStateAction } from './actions';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ui/components/card';
 import { FormField } from '@ui/components/form/form-field';
 import { FormFieldCheckbox } from '@ais-chat/ui/components/form/form-field-checkbox';
 import { FormFieldArray } from '@/components/form/FormFieldArray';
@@ -20,8 +14,11 @@ import { FederalStateModel, federalStateSchema } from '@shared/federal-states/ty
 import { DesignConfigurationSchema } from '@ui/types/design-configuration';
 import { logError } from '@shared/logging';
 import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { FormErrorDisplay } from '@/components/FormErrorDisplay';
 import { federalStatePictureUrlsSchema } from '@shared/db/schema';
+import { ROUTES } from '@/consts/routes';
+import { TrashSimpleIcon } from '@phosphor-icons/react';
 
 export type FederalStateViewProps = {
   federalState: FederalStateModel;
@@ -61,7 +58,11 @@ function transformToFederalStateEditForm(federalState: FederalStateModel): Feder
       ...federalState.featureToggles,
       isImageGenerationEnabled: federalState.featureToggles.isImageGenerationEnabled ?? false,
       isWebSearchEnabled: federalState.featureToggles.isWebSearchEnabled ?? false,
-      isAgenticChatEnabled: federalState.featureToggles.isAgenticChatEnabled ?? false,
+      isCalculatorEnabled: federalState.featureToggles.isCalculatorEnabled ?? false,
+      isSpeechModelEnabled: federalState.featureToggles.isSpeechModelEnabled ?? false,
+      isJsxGraphEnabled: federalState.featureToggles.isJsxGraphEnabled ?? false,
+      isSharedPageLocaleDetectionEnabled:
+        federalState.featureToggles.isSharedPageLocaleDetectionEnabled ?? true,
     },
     supportContacts: federalState.supportContacts?.map((s) => ({ value: s })) ?? [],
     designConfiguration: federalState.designConfiguration
@@ -73,6 +74,8 @@ function transformToFederalStateEditForm(federalState: FederalStateModel): Feder
 
 export function FederalStateView(props: FederalStateViewProps) {
   const { federalState } = props;
+  const router = useRouter();
+  const { dialogProps: deleteDialogProps, confirm: confirmDelete } = useConfirmAlertDialog();
 
   // Destructuring is necessary, otherwise formState is not updated correctly
   // https://www.react-hook-form.com/api/useform/formstate/
@@ -131,6 +134,16 @@ export function FederalStateView(props: FederalStateViewProps) {
   useEffect(() => {
     reset(transformToFederalStateEditForm(federalState));
   }, [federalState, reset]);
+
+  async function handleDelete() {
+    const result = await deleteFederalStateAction(federalState.id);
+    if (result.success) {
+      toast.success('Bundesland erfolgreich gelöscht');
+      router.push(ROUTES.app.federalStates);
+    } else {
+      toast.error(result.error.message);
+    }
+  }
 
   return (
     <Card>
@@ -261,9 +274,27 @@ export function FederalStateView(props: FederalStateViewProps) {
             control={control}
           />
           <FormFieldCheckbox
-            name="featureToggles.isAgenticChatEnabled"
-            label="Agentic Chat aktivieren"
-            description="Erlaubt die Nutzung des neuen agentic loop im Chat."
+            name="featureToggles.isCalculatorEnabled"
+            label="Taschenrechner aktivieren"
+            description="Erlaubt die Nutzung des Taschenrechners."
+            control={control}
+          />
+          <FormFieldCheckbox
+            name="featureToggles.isSpeechModelEnabled"
+            label="Sprachausgabe aktivieren"
+            description="Erlaubt die Nutzung der Sprachausgabe."
+            control={control}
+          />
+          <FormFieldCheckbox
+            name="featureToggles.isJsxGraphEnabled"
+            label="Graphen aktivieren"
+            description="Erlaubt die Darstellung von JSXGraph-Plots im Chat."
+            control={control}
+          />
+          <FormFieldCheckbox
+            name="featureToggles.isSharedPageLocaleDetectionEnabled"
+            label="Spracherkennung für geteilte Seiten aktivieren"
+            description="Ermittelt und setzt automatisch die Sprache für geteilte Seiten."
             control={control}
           />
           <FormField
@@ -280,13 +311,23 @@ export function FederalStateView(props: FederalStateViewProps) {
             control={control}
             type="textArea"
           />
-          <CardAction>
-            <Button type="submit" disabled={!isDirty}>
+          <div className="flex gap-3 pt-4">
+            <Button type="button" variant="destructive" onClick={() => confirmDelete(handleDelete)}>
+              <TrashSimpleIcon /> Löschen
+            </Button>
+            <Button type="submit" disabled={!isDirty || isSubmitting}>
               Speichern
             </Button>
-          </CardAction>
+          </div>
         </form>
       </CardContent>
+      <ConfirmAlertDialog
+        title="Bundesland löschen"
+        description="Möchten Sie dieses Bundesland wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden."
+        confirmLabel="Löschen"
+        cancelLabel="Abbrechen"
+        {...deleteDialogProps}
+      />
     </Card>
   );
 }

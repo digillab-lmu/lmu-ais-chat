@@ -1,13 +1,12 @@
+import { logError } from '@shared/logging';
 import { and, eq, getTableColumns, inArray } from 'drizzle-orm';
 import { db } from '..';
-import { federalStateLlmModelMappingTable, LlmModelSelectModel, llmModelTable } from '../schema';
-import { KnotenpunktLlmModel } from '../../knotenpunkt/schema';
-import {
-  dbGetFederalStateWithDecryptedApiKeyWithResult,
-  dbGetFederalStates,
-} from './federal-state';
 import { fetchLlmModels } from '../../knotenpunkt';
-import { logError } from '@shared/logging';
+import { federalStateLlmModelMappingTable, LlmModelSelectModel, llmModelTable } from '../schema';
+import {
+  dbGetFederalStates,
+  dbGetFederalStateWithDecryptedApiKeyWithResult,
+} from './federal-state';
 
 export async function dbGetLlmModelById({ modelId }: { modelId: string | undefined }) {
   if (modelId === undefined) return undefined;
@@ -32,6 +31,11 @@ export async function dbGetAllLlmModels() {
   return db.select().from(llmModelTable).orderBy(llmModelTable.createdAt).$withCache();
 }
 
+export async function dbGetSpeechModel() {
+  const models = await dbGetAllLlmModels();
+  return models.find((model) => model.isDeleted === false && model.priceMetadata.type === 'speech');
+}
+
 export async function dbGetLlmModelsByFederalStateId({
   federalStateId,
 }: {
@@ -53,11 +57,36 @@ export async function dbGetLlmModelsByFederalStateId({
     .$withCache();
 }
 
+export async function dbFindModelByIdAndFederalStateId({
+  modelId,
+  federalStateId,
+}: {
+  modelId: string;
+  federalStateId: string;
+}) {
+  const [model] = await db
+    .select({ ...getTableColumns(llmModelTable) })
+    .from(llmModelTable)
+    .innerJoin(
+      federalStateLlmModelMappingTable,
+      eq(federalStateLlmModelMappingTable.llmModelId, llmModelTable.id),
+    )
+    .where(
+      and(
+        eq(llmModelTable.id, modelId),
+        eq(federalStateLlmModelMappingTable.federalStateId, federalStateId),
+        eq(llmModelTable.isDeleted, false),
+      ),
+    )
+    .$withCache();
+  return model;
+}
+
 export async function dbFindModelsToUpdate({
   federalStateId,
 }: {
   federalStateId: string;
-}): Promise<{ models: KnotenpunktLlmModel[]; modelIdsToAdd: string[]; modelsToRemove: string[] }> {
+}): Promise<{ models: LlmModelSelectModel[]; modelIdsToAdd: string[]; modelsToRemove: string[] }> {
   const [error, result] = await dbGetFederalStateWithDecryptedApiKeyWithResult({ federalStateId });
   if (error !== null) {
     logError('Error getting federal state with decrypted API key', error, { federalStateId });
@@ -84,7 +113,7 @@ export async function dbFindModelsToUpdate({
 }
 
 export async function dbUpdateLlmModelsForAllFederalStates() {
-  const states = await dbGetFederalStates();
+  const states = (await dbGetFederalStates()).filter((state) => state.encryptedApiKey !== null);
 
   const stateUpdates = await Promise.all(
     states.map(async (state) => {
@@ -125,7 +154,7 @@ export async function dbGetModelByIdAndFederalStateId({
 }: {
   modelId: string;
   federalStateId: string;
-}) {
+}): Promise<LlmModelSelectModel | undefined> {
   const [result] = await db
     .select({ ...getTableColumns(llmModelTable) })
     .from(llmModelTable)
@@ -144,35 +173,23 @@ export async function dbGetModelByIdAndFederalStateId({
   return result;
 }
 
-async function dbUpsertLlmModels({ models }: { models: KnotenpunktLlmModel[] }) {
+async function dbUpsertLlmModels({ models }: { models: LlmModelSelectModel[] }) {
   // remove duplicates by id to avoid unnecessary upserts
-  const uniqueModelsMap: Record<string, KnotenpunktLlmModel> = {};
+  const uniqueModelsMap: Record<string, LlmModelSelectModel> = {};
   for (const model of models) {
     uniqueModelsMap[model.id] = model;
   }
   const uniqueModels = Object.values(uniqueModelsMap);
-  const insertedModels: LlmModelSelectModel[] = [];
   for (const model of uniqueModels) {
-    await db
-      .insert(llmModelTable)
-      .values(model)
-      .onConflictDoUpdate({
-        target: llmModelTable.id,
-        set: {
-          name: model.name,
-          displayName: model.displayName,
-          provider: model.provider,
-          description: model.description,
-          priceMetadata: model.priceMetadata,
-          supportedImageFormats: model.supportedImageFormats,
-          isNew: model.isNew,
-          isDeleted: model.isDeleted,
-        },
-      });
-    insertedModels.push(model);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id: _id, createdAt: _createdAt, ...conflictSet } = model;
+    await db.insert(llmModelTable).values(model).onConflictDoUpdate({
+      target: llmModelTable.id,
+      set: conflictSet,
+    });
   }
 
-  return insertedModels;
+  return uniqueModels;
 }
 
 async function dbUpsertFederalStateLlmModelMappings({

@@ -1,6 +1,6 @@
 import { useTranslations } from 'next-intl';
 import AutoResizeTextarea from '../common/auto-resize-textarea';
-import DisplayUploadedFile from './display-uploaded-file';
+import ChatInputAttachmentPreview from './chat-input-attachment-preview';
 import { LocalFileState } from './send-message-form';
 import {
   CHAT_MESSAGE_LENGTH_LIMIT,
@@ -10,6 +10,7 @@ import {
 import StopIcon from '../icons/stop';
 import ArrowRightIcon from '../icons/arrow-right';
 import UploadFileButton from './upload-file-button';
+import type { FileUploadResponse } from './upload-file-button';
 import { useToast } from '../common/toast';
 import {
   ChangeEvent,
@@ -35,6 +36,8 @@ export function ChatInputBox({
   customHandleSubmit,
   input,
   enableFileUpload = false,
+  fileUploadFn,
+  showPlaceholder = true,
 }: {
   files?: Map<string, LocalFileState>;
   setFiles?: Dispatch<SetStateAction<Map<string, LocalFileState>>>;
@@ -45,6 +48,8 @@ export function ChatInputBox({
   customHandleSubmit: (e: SyntheticEvent) => Promise<void>;
   input: string;
   enableFileUpload?: boolean;
+  fileUploadFn?: (file: File) => Promise<FileUploadResponse>;
+  showPlaceholder?: boolean;
 }) {
   const tCommon = useTranslations('common');
   const tFileInteraction = useTranslations('file-interaction');
@@ -140,12 +145,12 @@ export function ChatInputBox({
         {files !== undefined && handleDeattachFile !== undefined && files.size > 0 && (
           <div className="mx-2 py-2 flex gap-1 overflow-x-auto">
             {Array.from(files).map(([localId, file]) => (
-              <DisplayUploadedFile
-                fileName={file.file.name}
+              <ChatInputAttachmentPreview
                 key={localId}
-                status={file.status}
                 file={file}
                 onDeattachFile={() => handleDeattachFile(localId)}
+                height="large"
+                width="small"
               />
             ))}
           </div>
@@ -154,7 +159,7 @@ export function ChatInputBox({
           <AutoResizeTextarea
             /* eslint-disable-next-line jsx-a11y/no-autofocus */
             autoFocus
-            placeholder={tCommon('send-message-placeholder')}
+            placeholder={showPlaceholder ? tCommon('send-message-placeholder') : ''}
             className="w-full text-base focus:outline-hidden max-h-40 sm:max-h-60 overflow-y-auto placeholder:text-muted-foreground p-2"
             onChange={handleInputChange}
             value={input}
@@ -169,6 +174,7 @@ export function ChatInputBox({
                 setFiles={setFiles}
                 files={files}
                 setFileUploading={setFileUploading}
+                fileUploadFn={fileUploadFn}
               />
             </div>
           )}

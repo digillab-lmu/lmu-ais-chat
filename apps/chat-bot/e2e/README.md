@@ -5,9 +5,15 @@ For e2e tests we use [playwright](https://playwright.dev/).
 
 ## Mock LLM
 
-Most e2e tests use a local mock OpenAI-compatible server (`devops/docker/mock-llm/`) as the default
-text model instead of calling real LLMs. The mock server echoes the last user message back as a
-character-by-character SSE stream for deterministic responses.
+Most e2e tests use a local mock Azure/OpenAI Responses-compatible server (`services/mock-llm/`)
+as the default text model instead of calling real LLMs. The mock server streams deterministic SSE
+responses and can be controlled with `MOCK_LLM_COMMANDS` to trigger tool calls.
+
+Seeded e2e models are routed through Bifrost, including the mock models. Make sure Bifrost is
+running and `BIFROST_ADMIN_URL`, `BIFROST_ADMIN_USERNAME`, and `BIFROST_ADMIN_PASSWORD` are
+configured when seeding so the mock provider key is synced.
+For local Docker Compose runs, leave `LLM_MOCK_BASE_URL` unset or set it to `http://mock-llm:6556`;
+the URL must be reachable from the Bifrost container, not from the host.
 
 ### Starting the mock LLM locally
 
@@ -35,6 +41,18 @@ Then you can run the e2e tests from the apps/chat-bot directory.
 3. `pnpm e2e:ui` - This starts the playwright ui for the e2e tests.
 4. `pnpm e2e:api` - This runs the api tests.
 5. `pnpm e2e:api:ui` - This starts the playwright ui for the api tests.
+6. `pnpm e2e:smoke` - This runs only the tests tagged `@smoke` (chromium and api project).
+
+### Smoke vs. regression suite
+
+The GitHub workflow `e2e.yml` runs only the `@smoke` tests when a pull request is created or updated.
+The full suite (all tests, Firefox, external-services, isolated) runs as regression when a pull request is merged (push to `main`), or manually via `workflow_dispatch` with `suite=regression`.
+
+Tag a test with `{ tag: '@smoke' }` only if it is a core user journey or a cheap check, uses the mock LLM, and runs in chromium:
+
+```ts
+test('can login and send a message', { tag: '@smoke' }, async ({ page }) => {});
+```
 
 ### Run tests in vscode
 

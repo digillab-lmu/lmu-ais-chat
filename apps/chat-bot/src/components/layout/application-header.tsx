@@ -2,6 +2,7 @@
 
 import type { UserAndContext } from '@/auth/types';
 import ProfileMenu from '@/components/navigation/profile-menu';
+import { ThemeToggleButton } from '@/components/navigation/theme-toggle-button';
 import { ThreeDotsProfileMenu } from '@/components/navigation/three-dots-profile-menu';
 import { ToggleSidebarButton } from '@/components/navigation/sidebar/collapsible-sidebar';
 import { Fragment, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
@@ -43,11 +44,13 @@ export function ApplicationHeader({ userAndContext }: { userAndContext?: UserAnd
   );
 
   return (
-    <header className="h-20 flex-none px-6 py-4 flex items-center justify-between gap-4">
+    <header className="flex flex-row gap-4 min-h-20 px-6 py-2 items-center justify-between">
       <ToggleSidebarButton />
-      <div className="min-w-0 flex-1">
-        <div className="w-full" ref={headerMountRef} />
-      </div>
+      <div
+        className="flex flex-col sm:flex-row flex-wrap gap-4 min-w-0 flex-1"
+        ref={headerMountRef}
+      ></div>
+      <ThemeToggleButton />
       {isCompact && compactMenuItems.length > 0 ? (
         <ThreeDotsProfileMenu customItems={compactMenuItems} userAndContext={userAndContext} />
       ) : (

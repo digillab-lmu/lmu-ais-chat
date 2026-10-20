@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { PLOT_LANGUAGE } from '@/utils/code-blocks';
 import {
   Paragraph,
   HeadingLevel,
@@ -44,7 +45,9 @@ function processInlineTokens(children: Token[]): TextRun[] {
         continue;
       }
       if (child.attrs && child.attrs[0]) {
-        runs.push(new TextRun({ text: child.attrs[0][1], size: fontSize, color: '2F80ED' }));
+        runs.push(
+          new TextRun({ text: String(child.attrs[0][1]), size: fontSize, color: '2F80ED' }),
+        );
       }
     }
   }
@@ -215,6 +218,10 @@ export function markdownToDocx(markdownString: string): SectionType[] {
     } else if (token.type === 'thead_open') {
       continue;
     } else if (token.tag === 'code') {
+      // TODO TD-969: Plots are skipped for now, the export gets adapted later.
+      if (token.info?.trim().split(/\s+/)[0] === PLOT_LANGUAGE) {
+        continue;
+      }
       const codeContent = tokens[i]?.content;
       const lines = codeContent?.split('\n') ?? [];
       const tokenInfo = token.info ?? '';

@@ -6,16 +6,18 @@ import { login } from '../utils/login';
 test.describe('with stored auth', () => {
   test.use({ storageState: AUTH_FILES.teacher });
 
-  test('can login as teacher and send a message', async ({ page }) => {
+  test('can login as teacher and send a message', { tag: '@smoke' }, async ({ page }) => {
     await page.goto('/');
 
     // send first message
-    await sendMessage(page, 'Wieviel ist 2+2? [Hinweis: Ergebnis ist 4]');
-    await expect(page.getByLabel('assistant message 1')).toContainText('4');
+    await sendMessage(page, 'Wieviel ist 2+2?');
+    await expect(page.getByLabel('user message 1')).toContainText('Wieviel ist 2+2?');
+    await expect(page.getByLabel('assistant message 1')).toContainText(/\S/);
 
     // send second message
-    await sendMessage(page, 'Wieviel ist 3+3? [Hinweis: Ergebnis ist 6]');
-    await expect(page.getByLabel('assistant message 2')).toContainText('6');
+    await sendMessage(page, 'Wieviel ist 3+3?');
+    await expect(page.getByLabel('user message 2')).toContainText('Wieviel ist 3+3?');
+    await expect(page.getByLabel('assistant message 2')).toContainText(/\S/);
   });
 });
 

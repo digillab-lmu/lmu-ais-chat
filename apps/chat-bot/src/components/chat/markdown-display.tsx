@@ -1,14 +1,13 @@
-import React from 'react';
 import Markdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { nightOwl } from 'react-syntax-highlighter/dist/cjs/styles/prism';
 import remarkGfm from 'remark-gfm';
 import RehypeKatex from 'rehype-katex';
 import RemarkMathPlugin from 'remark-math';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { cn } from '@/utils/tailwind';
-import CopyToClipboardButton from '../common/clipboard-button';
+import { MarkdownCode } from './markdown-code';
+import { rehypeJsxGraphPlot, JSXGRAPH_PLOT_HNAME } from './plot/rehype-jsxgraph-plot';
+import { JsxGraphPlotElement } from './plot/plot-block';
 
 type MarkdownDisplayProps = {
   children: string;
@@ -35,10 +34,10 @@ export default function MarkdownDisplay({ children: _children }: MarkdownDisplay
   const removeTopPaddingAfterHrClass = '[&>hr+*]:pt-0';
 
   return (
-    <div className={cn('wrap-break-word text-base', removeTopPaddingAfterHrClass)}>
+    <div className={cn('w-full min-w-0 wrap-break-word text-base', removeTopPaddingAfterHrClass)}>
       <Markdown
         remarkPlugins={[RemarkMathPlugin, remarkGfm]}
-        rehypePlugins={[[RehypeKatex, KATEX_RENDER_OPTIONS]]}
+        rehypePlugins={[[RehypeKatex, KATEX_RENDER_OPTIONS], rehypeJsxGraphPlot]}
         components={{
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           h1({ children, className, node, ...props }) {
@@ -135,10 +134,7 @@ export default function MarkdownDisplay({ children: _children }: MarkdownDisplay
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           th({ children, className, node, ...props }) {
             return (
-              <th
-                className={cn('text-left p-2 border bg-slate-100 font-medium', className)}
-                {...props}
-              >
+              <th className={cn('text-left p-2 border bg-muted font-medium', className)} {...props}>
                 {children}
               </th>
             );
@@ -161,13 +157,14 @@ export default function MarkdownDisplay({ children: _children }: MarkdownDisplay
           },
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           table({ children, className, node, ...props }) {
+            // The scroll container keeps wide tables from stretching the whole message, so only
+            // the table scrolls horizontally while the surrounding text stays within the viewport.
             return (
-              <table
-                className={cn('w-full border my-4 first:mt-0 last:mb-0 border-collapse', className)}
-                {...props}
-              >
-                {children}
-              </table>
+              <div className="my-4 first:mt-0 last:mb-0 max-w-full overflow-x-auto">
+                <table className={cn('w-full border border-collapse', className)} {...props}>
+                  {children}
+                </table>
+              </div>
             );
           },
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -213,46 +210,8 @@ export default function MarkdownDisplay({ children: _children }: MarkdownDisplay
               </p>
             );
           },
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          code({ className, children, node, ...props }) {
-            const sanitizedText = String(children).replace(/\n$/, '');
-            const match = /language-(\w+)/.exec(className || '');
-
-            const language = match?.[1];
-
-            if (language === undefined) {
-              return (
-                <code
-                  className={cn(className, 'wrap-break-word bg-main-200 px-0.5 text-wrap text-sm')}
-                >
-                  {children}
-                </code>
-              );
-            }
-
-            return (
-              <div className="flex flex-col py-2 text-sm max-w-full">
-                <div className="flex items-center justify-center bg-gray-300 py-2 px-2">
-                  <span>{language}</span>
-                  <div className="grow" />
-                  <CopyToClipboardButton text={sanitizedText} />
-                </div>
-                <SyntaxHighlighter
-                  // @ts-expect-error wrong typing
-                  style={nightOwl}
-                  language={language}
-                  PreTag="pre"
-                  {...props}
-                  customStyle={{
-                    overflowX: 'auto',
-                    margin: '0rem',
-                  }}
-                >
-                  {sanitizedText}
-                </SyntaxHighlighter>
-              </div>
-            );
-          },
+          code: MarkdownCode,
+          [JSXGRAPH_PLOT_HNAME]: JsxGraphPlotElement,
         }}
       >
         {children}

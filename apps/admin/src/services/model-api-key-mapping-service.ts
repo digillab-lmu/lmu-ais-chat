@@ -1,5 +1,8 @@
 import {
+  dbGetAllApiKeysByOrganizationId,
   dbGetAllModelMappingsForApiKey,
+  dbGetApiKeyIdsForModel,
+  dbSetApiKeysForModel,
   dbUpdateModelMappingsForApiKey,
 } from '@ais-chat/api-database';
 import { logInfo } from '@shared/logging';
@@ -26,9 +29,34 @@ export async function saveModelApiKeyMappings(
     modelIds,
   );
 
+  await dbUpdateLlmModelsForAllFederalStates();
+
   logInfo('API Key mapping was updated successfully', { projectId, apiKeyId, modelIds });
+
+  return result;
+}
+
+export async function getLlmApiKeyAssignmentsData(organizationId: string, modelId: string) {
+  const [apiKeys, assignedApiKeyIds] = await Promise.all([
+    dbGetAllApiKeysByOrganizationId(organizationId),
+    dbGetApiKeyIdsForModel(organizationId, modelId),
+  ]);
+
+  return { apiKeys, assignedApiKeyIds };
+}
+
+export async function saveApiKeysForModel(
+  organizationId: string,
+  modelId: string,
+  apiKeyIds: string[],
+) {
+  await dbSetApiKeysForModel(organizationId, modelId, apiKeyIds);
 
   await dbUpdateLlmModelsForAllFederalStates();
 
-  return result;
+  logInfo('Model API key assignments were updated successfully', {
+    organizationId,
+    modelId,
+    apiKeyIds,
+  });
 }

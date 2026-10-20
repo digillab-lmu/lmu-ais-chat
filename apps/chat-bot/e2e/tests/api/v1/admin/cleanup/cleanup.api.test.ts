@@ -183,14 +183,18 @@ test.describe('cleanup', () => {
   });
 });
 
-test('should return 403 if authorization header is missing', async ({ request }) => {
-  const response = await request.delete(cleanupRoute);
-  expect(response.status()).toBe(403);
-});
+test(
+  'should return 403 if authorization header is missing',
+  { tag: '@smoke' },
+  async ({ request }) => {
+    const response = await request.delete(cleanupRoute);
+    expect(response.status()).toBe(403);
+  },
+);
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const learningScenarioInsertSchema = createInsertSchema(learningScenarioTable).omit({
-  accessLevel: true,
+  webSearchScope: true,
 });
 async function createLearningScenario(
   data?: Partial<z.infer<typeof learningScenarioInsertSchema>>,
@@ -217,7 +221,9 @@ async function createLearningScenario(
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const characterInsertSchema = createInsertSchema(characterTable).omit({ accessLevel: true });
+const characterInsertSchema = createInsertSchema(characterTable).omit({
+  webSearchScope: true,
+});
 async function createCharacter(data?: Partial<z.infer<typeof characterInsertSchema>>) {
   const userId = data?.userId ?? generateUUID();
   const [character] = await db
@@ -243,7 +249,10 @@ async function createCharacter(data?: Partial<z.infer<typeof characterInsertSche
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const assistantInsertSchema = createInsertSchema(assistantTable).omit({ accessLevel: true });
+const assistantInsertSchema = createInsertSchema(assistantTable).omit({
+  webSearchScope: true,
+  webSearchIncludedDomains: true,
+});
 async function createAssistant(data?: Partial<z.infer<typeof assistantInsertSchema>>) {
   const userId = data?.userId ?? generateUUID();
   const [assistant] = await db

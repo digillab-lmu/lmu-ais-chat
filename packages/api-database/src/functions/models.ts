@@ -1,13 +1,13 @@
 import { eq, inArray, and } from 'drizzle-orm';
 import {
-  db,
-  dbGetAllApiKeysByProjectId,
-  dbGetOrganizationAndProjectsByOrganizationId,
-  LlmInsertModel,
-  LlmModel,
   llmModelApiKeyMappingTable,
+  llmModelProviderKeyMappingTable,
   llmModelTable,
-} from '..';
+} from '../schema';
+import { db } from '../db';
+import { dbGetAllApiKeysByProjectId } from './api-key';
+import { dbGetOrganizationAndProjectsByOrganizationId } from './organization';
+import type { LlmInsertModel, LlmModel } from '../schema';
 
 export async function dbGetAllModels() {
   return db.select().from(llmModelTable).orderBy(llmModelTable.createdAt);
@@ -113,6 +113,26 @@ export async function dbDeleteLlmModelById(id: string) {
   return (await db.delete(llmModelTable).where(eq(llmModelTable.id, id)).returning())[0];
 }
 
+export async function dbDeleteLlmModel(id: string, organizationId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [model] = await tx
+      .select({ id: llmModelTable.id })
+      .from(llmModelTable)
+      .where(and(eq(llmModelTable.id, id), eq(llmModelTable.organizationId, organizationId)))
+      .limit(1);
+    if (!model) return false;
+
+    await tx
+      .delete(llmModelProviderKeyMappingTable)
+      .where(eq(llmModelProviderKeyMappingTable.llmModelId, id));
+    await tx
+      .delete(llmModelApiKeyMappingTable)
+      .where(eq(llmModelApiKeyMappingTable.llmModelId, id));
+    await tx.delete(llmModelTable).where(eq(llmModelTable.id, id));
+    return true;
+  });
+}
+
 export async function dbGetModelsByIds({ modelIds }: { modelIds: string[] }) {
   if (modelIds.length < 1) return [];
 
@@ -155,20 +175,14 @@ export async function dbCreateModelWithApiKeyLinks({
       linkedApiKeys: { id: string; name: string }[];
     }
 > {
-  // Check for existing model with same name and provider in the organization
+  // Logical model names are unique within an organization regardless of upstream provider.
   const existingModel = await db
     .select()
     .from(llmModelTable)
-    .where(
-      and(
-        eq(llmModelTable.name, name),
-        eq(llmModelTable.provider, provider),
-        eq(llmModelTable.organizationId, organizationId),
-      ),
-    );
+    .where(and(eq(llmModelTable.name, name), eq(llmModelTable.organizationId, organizationId)));
   if (existingModel.length > 0) {
     return {
-      error: 'A model with this name and provider already exists for this organization.',
+      error: 'A model with this name already exists for this organization.',
     };
   }
 

@@ -1,16 +1,13 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
+import { type ColumnFiltersState } from '@tanstack/react-table';
 import { Button } from '@ui/components/button';
+import { Checkbox } from '@ui/components/checkbox';
+import { Input } from '@ui/components/input';
+import { DataTable } from '@ui/components/data-table';
 import { getTemplatesAction } from './actions';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@ui/components/table';
+import { FieldLabel } from '@ui/components/field';
 import {
   Card,
   CardAction,
@@ -19,17 +16,21 @@ import {
   CardHeader,
   CardTitle,
 } from '@ui/components/card';
-import { ROUTES } from '@/consts/routes';
-import Link from 'next/link';
 import { TemplateModel } from '@shared/templates/template';
-import { Search } from 'lucide-react';
-import { getTemplateTypeName } from './templateTypeName';
+import { Skeleton } from '@ui/components/skeleton';
 import { CreateTemplateModal } from './CreateTemplateModal';
+import { columns } from './columns';
 
 export default function TemplateListView() {
   const [templates, setTemplates] = useState<TemplateModel[]>([]);
   const [isPending, startTransition] = useTransition();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [showDeletedTemplates, setShowDeletedTemplates] = useState(false);
+
+  const visibleTemplates = showDeletedTemplates
+    ? templates
+    : templates.filter((template) => !template.isDeleted);
 
   const loadTemplates = async () => {
     startTransition(async () => {
@@ -42,12 +43,7 @@ export default function TemplateListView() {
     void loadTemplates();
   }, []);
 
-  const handleNewTemplate = () => {
-    setIsModalOpen(true);
-  };
-
   const handleModalSuccess = () => {
-    // Reload templates after successful creation
     void loadTemplates();
   };
 
@@ -60,43 +56,47 @@ export default function TemplateListView() {
             Liste aller globalen Vorlagen, sowohl Dialogpartner als auch Assistenten.
           </CardDescription>
           <CardAction>
-            <Button onClick={handleNewTemplate}>Neue Vorlage</Button>
+            <Button onClick={() => setIsModalOpen(true)}>Neue Vorlage</Button>
             <Button disabled={isPending} onClick={loadTemplates} className="ml-2">
-              Aktualisieren
+              {isPending ? 'Lädt...' : 'Aktualisieren'}
             </Button>
           </CardAction>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[300px]">Id</TableHead>
-                <TableHead className="w-[300px]">Original Id</TableHead>
-                <TableHead>Typ</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Erstellt am</TableHead>
-                <TableHead>Gelöscht</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {templates.map((template) => (
-                <TableRow key={template.id}>
-                  <TableCell>{template.id}</TableCell>
-                  <TableCell>{template.originalId}</TableCell>
-                  <TableCell>{getTemplateTypeName(template.type)}</TableCell>
-                  <TableCell>{template.name}</TableCell>
-                  <TableCell>{template.createdAt.toLocaleString()}</TableCell>
-                  <TableCell>{template.isDeleted ? 'ja' : 'nein'}</TableCell>
-                  <TableCell>
-                    <Link href={ROUTES.app.template(template.type, template.id)}>
-                      <Search className="text-primary" />
-                    </Link>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          {isPending ? (
+            <div className="flex flex-col gap-4">
+              <Skeleton className="h-4 w-full rounded" />
+              <Skeleton className="h-4 w-full rounded" />
+              <Skeleton className="h-4 w-full rounded" />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-row gap-8 items-center">
+                <Input
+                  placeholder="Nach Name filtern"
+                  value={(columnFilters.find((f) => f.id === 'name')?.value as string) ?? ''}
+                  onChange={(e) => setColumnFilters([{ id: 'name', value: e.target.value }])}
+                  className="max-w-sm"
+                />
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="show-deleted-templates"
+                    checked={showDeletedTemplates}
+                    onCheckedChange={(checked) => setShowDeletedTemplates(checked === true)}
+                  />
+                  <FieldLabel htmlFor="show-deleted-templates">
+                    gelöschte Vorlagen anzeigen
+                  </FieldLabel>
+                </div>
+              </div>
+              <DataTable
+                columns={columns}
+                data={visibleTemplates}
+                columnFilters={columnFilters}
+                onColumnFiltersChange={setColumnFilters}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 

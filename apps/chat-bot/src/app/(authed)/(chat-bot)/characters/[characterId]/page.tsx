@@ -1,4 +1,5 @@
 import { getCharacterForEditView } from '@shared/characters/character-service';
+import { isWebSearchAvailableForFederalState } from '@/app/api/chat/websearch';
 import { requireAuth } from '@/auth/requireAuth';
 import { handleErrorInServerComponent } from '@/error/handle-error-in-server-component';
 import { WebSource } from '@shared/db/types';
@@ -20,12 +21,18 @@ export default async function Page(props: PageProps<'/characters/[characterId]'>
   const { characterId } = await props.params;
   const { user, federalState } = await requireAuth();
 
-  const { character, relatedFiles, maybeSignedPictureUrl, maxBudget, usedBudget } =
-    await getCharacterForEditView({
-      characterId,
-      user,
-      federalState,
-    }).catch(handleErrorInServerComponent);
+  const {
+    character,
+    relatedFiles,
+    maybeSignedPictureUrl,
+    maxBudget,
+    usedBudget,
+    budgetUsedBySharedChat,
+  } = await getCharacterForEditView({
+    characterId,
+    user,
+    federalState,
+  }).catch(handleErrorInServerComponent);
 
   const initialLinks = character.attachedLinks
     .filter((l) => l !== '')
@@ -46,6 +53,9 @@ export default async function Page(props: PageProps<'/characters/[characterId]'>
         avatarPictureUrl={maybeSignedPictureUrl}
         usedBudget={usedBudget ?? 0}
         maxBudget={maxBudget ?? 500}
+        budgetUsedBySharedChat={budgetUsedBySharedChat}
+        isWebSearchAvailable={isWebSearchAvailableForFederalState(federalState.featureToggles)}
+        isSpeechAvailable={federalState.featureToggles.isSpeechModelEnabled === true}
       />
     </DefaultPageLayout>
   );

@@ -1,5 +1,8 @@
 import { requireAuth } from '@/auth/requireAuth';
+import { isWebSearchAvailableForFederalState } from '@/app/api/chat/websearch';
 import { getLearningScenarioForEditView } from '@shared/learning-scenarios/learning-scenario-service';
+import { getCommunityTemplateRequestWithEvents } from '@shared/community-templates/community-template-service';
+import { getSpeechModelVoices } from '@shared/llm-models/llm-model-service';
 import { handleErrorInServerComponent } from '@/error/handle-error-in-server-component';
 import { WebSource } from '@shared/db/types';
 import { LearningScenarioEdit } from './learning-scenario-edit';
@@ -23,18 +26,29 @@ export default async function Page(
   const { learningScenarioId } = await props.params;
   const { user, federalState } = await requireAuth();
 
-  const { learningScenario, relatedFiles, avatarPictureUrl, maxBudget, usedBudget } =
-    await getLearningScenarioForEditView({
-      learningScenarioId: learningScenarioId,
-      user,
-      federalState,
-    }).catch(handleErrorInServerComponent);
+  const {
+    learningScenario,
+    relatedFiles,
+    avatarPictureUrl,
+    maxBudget,
+    usedBudget,
+    budgetUsedBySharedChat,
+  } = await getLearningScenarioForEditView({
+    learningScenarioId: learningScenarioId,
+    user,
+    federalState,
+  }).catch(handleErrorInServerComponent);
 
   const readOnly = user.id !== learningScenario.userId;
 
   if (readOnly) {
     redirect(`/learning-scenarios/${learningScenarioId}`);
   }
+
+  const communityTemplateRequest = await getCommunityTemplateRequestWithEvents({
+    entityRef: { entityType: 'learningScenario', entityId: learningScenarioId },
+    user,
+  }).catch(handleErrorInServerComponent);
 
   const initialLinks = learningScenario.attachedLinks
     .filter((l) => l && l !== '')
@@ -46,6 +60,9 @@ export default async function Page(
         }) as WebSource,
     );
 
+  const isSpeechAvailable = federalState.featureToggles.isSpeechModelEnabled === true;
+  const speechVoices = isSpeechAvailable ? await getSpeechModelVoices() : [];
+
   return (
     <DefaultPageLayout layoutConfig={{ layout: 'form' }}>
       <LearningScenarioEdit
@@ -53,8 +70,13 @@ export default async function Page(
         relatedFiles={relatedFiles}
         initialLinks={initialLinks}
         avatarPictureUrl={avatarPictureUrl}
+        initialCommunityTemplateRequest={communityTemplateRequest}
         usedBudget={usedBudget ?? 0}
         maxBudget={maxBudget ?? 500}
+        budgetUsedBySharedChat={budgetUsedBySharedChat}
+        isWebSearchAvailable={isWebSearchAvailableForFederalState(federalState.featureToggles)}
+        isSpeechAvailable={isSpeechAvailable}
+        speechVoices={speechVoices}
       />
     </DefaultPageLayout>
   );

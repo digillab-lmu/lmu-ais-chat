@@ -1,17 +1,19 @@
+import { PRICE_AND_CENT_MULTIPLIER, TOKEN_AMOUNT_PER_PRICE } from '@/db/const';
+import type { SpeechUsage } from '@ais-chat/ai-core';
 import { dbGetFederalStateWithDecryptedApiKeyWithResult } from '@shared/db/functions/federal-state';
 import {
-  dbGetModelByIdAndFederalStateId,
   dbGetLlmModelsByFederalStateId,
+  dbGetModelByIdAndFederalStateId,
 } from '@shared/db/functions/llm-model';
-import { errorifyAsyncFn } from '@shared/utils/error';
 import { LlmModelSelectModel } from '@shared/db/schema';
-import { PRICE_AND_CENT_MULTIPLIER } from '@/db/const';
 import {
-  DEFAULT_AUXILIARY_MODEL,
-  FALLBACK_AUXILIARY_MODEL,
-} from '@shared/llm-models/default-llm-models';
-import { getDefaultModel, getFirstTextModel } from '@shared/llm-models/llm-model-service';
+  findStaticModelByRoleAndFederalStateId,
+  getDefaultModel,
+  getSafetyModel,
+} from '@shared/llm-models/llm-model-service';
+import { getFirstTextModel } from '@shared/llm-models/llm-model-utils';
 import { logError } from '@shared/logging';
+import { errorifyAsyncFn } from '@shared/utils/error';
 import { isValidPositiveNumber } from '@shared/utils/number';
 
 export function getSearchParamsFromUrl(url: string) {
@@ -125,6 +127,27 @@ function calculateCostsInCentForEmbeddingModel(
 }
 
 /**
+ * Calculates the cost of a speech generation in cent.
+ *
+ * `priceMetadata` values for the speech model are given in cent per 1 million tokens.
+ */
+export function calculateSpeechCostsInCent(model: LlmModelSelectModel, usage: SpeechUsage): number {
+  if (model.priceMetadata.type !== 'speech') {
+    logError(
+      'Invalid model type, gracefully returning 0: ' + model.name,
+      new TypeError('Invalid model type'),
+    );
+
+    return 0;
+  }
+
+  const inputTextTokenPrice = usage.inputTextTokens * model.priceMetadata.inputTextTokenPrice;
+  const outputAudioTokenPrice = usage.outputAudioTokens * model.priceMetadata.outputAudioTokenPrice;
+
+  return (inputTextTokenPrice + outputAudioTokenPrice) / TOKEN_AMOUNT_PER_PRICE;
+}
+
+/**
  * Get token usage safely, ensuring valid numbers
  * @param usage The usage object containing promptTokens and completionTokens
  * @returns An object with valid promptTokens and completionTokens
@@ -153,11 +176,13 @@ export function getTokenUsage(usage: { promptTokens: number; completionTokens: n
  * @returns The auxiliary model for the federal state
  */
 export async function getAuxiliaryModel(federalStateId: string): Promise<LlmModelSelectModel> {
-  const llmModels = await dbGetLlmModelsByFederalStateId({
-    federalStateId,
-  });
+  const [llmModels, configuredAuxiliaryModel, configuredFallbackModel] = await Promise.all([
+    dbGetLlmModelsByFederalStateId({ federalStateId }),
+    findStaticModelByRoleAndFederalStateId({ role: 'auxiliary', federalStateId }),
+    findStaticModelByRoleAndFederalStateId({ role: 'auxiliary-fallback', federalStateId }),
+  ]);
   const auxiliaryModel =
-    getDefaultAuxModel(llmModels) ?? getFallbackAuxModel(llmModels) ?? getFirstTextModel(llmModels);
+    configuredAuxiliaryModel ?? configuredFallbackModel ?? getFirstTextModel(llmModels);
   if (auxiliaryModel === undefined) {
     const error = new Error('No auxiliary model found for federal state id ' + federalStateId);
     logError(error.message, error);
@@ -168,6 +193,39 @@ export async function getAuxiliaryModel(federalStateId: string): Promise<LlmMode
   return auxiliaryModel;
 }
 
+export { getSafetyModel };
+
+/**
+ * Get a strong auxiliary model for the federal state for more complex tasks like language determination.
+ * This model is more capable than the default auxiliary model but also more resource-intensive, so should be used wisely.
+ * @returns The strong auxiliary model for the federal state
+ */
+export async function getStrongAuxiliaryModel(
+  federalStateId: string,
+): Promise<LlmModelSelectModel> {
+  const [llmModels, auxiliaryModel, configuredAuxiliaryModel, configuredFallbackModel] =
+    await Promise.all([
+      dbGetLlmModelsByFederalStateId({ federalStateId }),
+      findStaticModelByRoleAndFederalStateId({ role: 'strong-auxiliary', federalStateId }),
+      findStaticModelByRoleAndFederalStateId({ role: 'auxiliary', federalStateId }),
+      findStaticModelByRoleAndFederalStateId({ role: 'auxiliary-fallback', federalStateId }),
+    ]);
+  if (auxiliaryModel !== undefined) {
+    return auxiliaryModel;
+  }
+
+  const fallbackAuxiliaryModel =
+    configuredAuxiliaryModel ?? configuredFallbackModel ?? getFirstTextModel(llmModels);
+  if (fallbackAuxiliaryModel === undefined) {
+    const error = new Error('No auxiliary model found for federal state id ' + federalStateId);
+    logError(error.message, error);
+
+    throw error;
+  }
+
+  return fallbackAuxiliaryModel;
+}
+
 /**
  * Get the default model for the federal state
  * @returns The default model for the federal state
@@ -175,17 +233,6 @@ export async function getAuxiliaryModel(federalStateId: string): Promise<LlmMode
 export async function getDefaultModelByFederalStateId(
   federalStateId: string,
 ): Promise<LlmModelSelectModel | undefined> {
-  const llmModels = await dbGetLlmModelsByFederalStateId({
-    federalStateId,
-  });
-
-  return getDefaultModel(llmModels);
-}
-
-function getDefaultAuxModel(models: LlmModelSelectModel[]): LlmModelSelectModel | undefined {
-  return models.find((model) => model.name === DEFAULT_AUXILIARY_MODEL);
-}
-
-function getFallbackAuxModel(models: LlmModelSelectModel[]): LlmModelSelectModel | undefined {
-  return models.find((model) => model.name === FALLBACK_AUXILIARY_MODEL);
+  const models = await dbGetLlmModelsByFederalStateId({ federalStateId });
+  return getDefaultModel({ federalStateId, models });
 }

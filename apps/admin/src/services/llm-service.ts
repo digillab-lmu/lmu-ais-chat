@@ -1,12 +1,21 @@
+import { z } from 'zod';
 import {
   dbGetAllModelsByOrganizationId,
   dbCreateLlmModel,
   dbUpdateLlmModel,
+  dbDeleteLlmModel,
   dbGetOrganizationById,
+  dbReplaceModelProviderKeyMappings,
 } from '@ais-chat/api-database';
+import { imageGenerationConfigSchema, speechConfigSchema } from '@ais-chat/api-database/types';
+import { llmModelPriceMetadataSchema } from '@ais-chat/shared/db/schema';
 import { CreateLargeLanguageModel, UpdateLargeLanguageModel } from '../types/large-language-model';
 import { logInfo } from '@shared/logging';
 import { dbUpdateLlmModelsForAllFederalStates } from '@shared/db/functions/llm-model';
+import { syncBifrostProvidersForOrganizationOrThrow } from './bifrost-provider-sync-service';
+import { runDeleteOrThrowError } from '@/utils/run-delete-or-throw-error';
+
+const supportedImageFormatsSchema = z.array(z.string());
 
 export async function getLargeLanguageModels(organizationId: string) {
   return dbGetAllModelsByOrganizationId(organizationId);
@@ -18,26 +27,44 @@ export async function createLargeLanguageModel(
 ) {
   const organization = await dbGetOrganizationById(organizationId);
   if (!organization) throw new Error('Organization not found');
+  const existingModels = await dbGetAllModelsByOrganizationId(organizationId);
+  if (existingModels.some(({ name }) => name === data.name)) {
+    throw new Error('A model with this name already exists for this organization');
+  }
 
   const model = await dbCreateLlmModel({
     name: data.name,
     displayName: data.displayName,
-    provider: data.provider,
+    provider: 'bifrost',
     description: data.description ?? '',
-    setting: data.setting ? JSON.parse(data.setting) : {},
-    priceMetadata: data.priceMetadata
-      ? JSON.parse(data.priceMetadata)
-      : { type: 'text' as const, completionTokenPrice: 0, promptTokenPrice: 0 },
-    supportedImageFormats: data.supportedImageFormats ? JSON.parse(data.supportedImageFormats) : [],
+    setting: { provider: 'bifrost' },
+    priceMetadata: llmModelPriceMetadataSchema.parse(JSON.parse(data.priceMetadata)),
+    supportedImageFormats: data.supportedImageFormats
+      ? supportedImageFormatsSchema.parse(JSON.parse(data.supportedImageFormats))
+      : [],
+    imageGenerationConfig: data.imageGenerationConfig
+      ? imageGenerationConfigSchema.parse(JSON.parse(data.imageGenerationConfig))
+      : undefined,
+    modelConfig: data.modelConfig
+      ? speechConfigSchema.parse(JSON.parse(data.modelConfig))
+      : undefined,
     additionalParameters: data.additionalParameters ? JSON.parse(data.additionalParameters) : {},
     organizationId,
     isNew: data.isNew,
     isDeleted: data.isDeleted,
+    useBifrost: data.useBifrost,
+    safetyFilterEnabled: data.safetyFilterEnabled,
   });
 
   logInfo('LLM was created successfully', { organizationId, data });
 
   if (!model) throw new Error('Failed to create model');
+  await dbReplaceModelProviderKeyMappings({
+    modelId: model.id,
+    organizationId,
+    providerKeys: data.providerKeys,
+  });
+  await syncBifrostProvidersForOrganizationOrThrow(organizationId);
   return model;
 }
 
@@ -46,27 +73,60 @@ export async function updateLargeLanguageModel(
   modelId: string,
   data: UpdateLargeLanguageModel,
 ) {
+  const existingModels = await dbGetAllModelsByOrganizationId(organizationId);
+  if (existingModels.some(({ id, name }) => id !== modelId && name === data.name)) {
+    throw new Error('A model with this name already exists for this organization');
+  }
+
   const model = await dbUpdateLlmModel(modelId, organizationId, {
     name: data.name,
     displayName: data.displayName,
-    provider: data.provider,
+    provider: 'bifrost',
     description: data.description,
-    setting: data.setting ? JSON.parse(data.setting) : undefined,
-    priceMetadata: data.priceMetadata ? JSON.parse(data.priceMetadata) : undefined,
+    setting: { provider: 'bifrost' },
+    priceMetadata: llmModelPriceMetadataSchema.parse(JSON.parse(data.priceMetadata)),
     supportedImageFormats: data.supportedImageFormats
-      ? JSON.parse(data.supportedImageFormats)
+      ? supportedImageFormatsSchema.parse(JSON.parse(data.supportedImageFormats))
+      : undefined,
+    imageGenerationConfig: data.imageGenerationConfig
+      ? imageGenerationConfigSchema.parse(JSON.parse(data.imageGenerationConfig))
+      : undefined,
+    modelConfig: data.modelConfig
+      ? speechConfigSchema.parse(JSON.parse(data.modelConfig))
       : undefined,
     additionalParameters: data.additionalParameters
       ? JSON.parse(data.additionalParameters)
       : undefined,
     isNew: data.isNew,
     isDeleted: data.isDeleted,
+    useBifrost: data.useBifrost,
+    safetyFilterEnabled: data.safetyFilterEnabled,
   });
+
+  await dbReplaceModelProviderKeyMappings({
+    modelId,
+    organizationId,
+    providerKeys: data.providerKeys,
+  });
+
+  await syncBifrostProvidersForOrganizationOrThrow(organizationId);
+  await dbUpdateLlmModelsForAllFederalStates();
+  if (!model) throw new Error('Failed to update model');
 
   logInfo('LLM was updated successfully', { organizationId, modelId, data });
 
+  return model;
+}
+
+export async function deleteLargeLanguageModel(organizationId: string, modelId: string) {
+  const deleted = await runDeleteOrThrowError(
+    () => dbDeleteLlmModel(modelId, organizationId),
+    'Sprachmodell kann nicht gelöscht werden, da noch Daten damit verknüpft sind.',
+  );
+  if (!deleted) throw new Error('Model not found');
+
+  await syncBifrostProvidersForOrganizationOrThrow(organizationId);
   await dbUpdateLlmModelsForAllFederalStates();
 
-  if (!model) throw new Error('Failed to update model');
-  return model;
+  logInfo('LLM was deleted successfully', { organizationId, modelId });
 }

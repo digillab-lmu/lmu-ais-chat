@@ -1,13 +1,18 @@
-import type { SharedChatExpiredError, TokenPointsExceededError } from '@ais-chat/ai-core/errors';
-import type { NotFoundError } from '@shared/error';
-import type { WebSearchResult } from '@shared/db/schema';
 import type { ChatAttachment } from '@ais-chat/ai-core';
 import {
   CONVERSATION_ROLES,
   type ConversationRole,
   type ToolCall,
 } from '@ais-chat/ai-core/chat/types';
+import type {
+  ResponsibleAIError,
+  SharedChatExpiredError,
+  TokenPointsExceededError,
+} from '@ais-chat/ai-core/errors';
+import type { NotFoundError } from '@shared/error';
+import { isToolRelatedMessage } from '@shared/utils/tool-related-message';
 import z from 'zod';
+import { aiActivityStepSchema, type AiActivityStep } from './ai-activity';
 
 /**
  * Serialized error that can be safely transmitted across the Server Action boundary.
@@ -27,13 +32,19 @@ export type SerializedError = {
  */
 export type ChatStatus = 'ready' | 'submitted' | 'reasoning' | 'streaming' | 'error';
 
+/**
+ * Generates speech audio for a message. Receives a flag indicating whether this is an
+ * initial message (e.g. a character's initial message), in order to route it to a non-billed endpoint.
+ */
+export type GenerateSpeechFn = (text: string, isInitialMessage: boolean) => Promise<Blob>;
+
 export const chatMessageSchema = z.object({
   id: z.string(),
   role: z.enum(CONVERSATION_ROLES),
   content: z.string(),
   createdAt: z.coerce.date().optional(),
   attachments: z.array(z.any()).optional(),
-  webSearchResults: z.array(z.any()).optional(),
+  activitySteps: z.array(aiActivityStepSchema).optional(),
   toolCalls: z.array(z.any()).optional(),
   toolCallId: z.string().optional(),
 });
@@ -48,7 +59,7 @@ export type ChatMessage = {
   content: string;
   createdAt?: Date;
   attachments?: ChatAttachment[];
-  webSearchResults?: WebSearchResult[];
+  activitySteps?: AiActivityStep[];
   toolCalls?: ToolCall[];
   toolCallId?: string;
 };
@@ -60,7 +71,6 @@ export type ChatMessage = {
 export type SendMessageResult = {
   stream: ReadableStream<string>;
   messageId: string;
-  webSearchResults?: WebSearchResult[];
   error?: SerializedError;
 };
 
@@ -68,7 +78,7 @@ export type SendMessageResult = {
  * Creates a SendMessageResult with a serialized error.
  */
 export function createErrorResult(
-  error: TokenPointsExceededError | SharedChatExpiredError | NotFoundError,
+  error: TokenPointsExceededError | SharedChatExpiredError | ResponsibleAIError | NotFoundError,
 ): SendMessageResult {
   return {
     stream: new ReadableStream<string>({
@@ -112,7 +122,7 @@ export type UIMessage = ChatMessage & {
  */
 export function toUIMessages(messages: ChatMessage[]): UIMessage[] {
   return messages
-    .filter((m) => m.role !== 'tool' && !m.toolCalls?.length)
+    .filter((m) => !isToolRelatedMessage(m))
     .map((m) => ({
       ...m,
       parts: [{ type: 'text' as const, text: m.content }],

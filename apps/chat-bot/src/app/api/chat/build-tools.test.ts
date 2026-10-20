@@ -1,410 +1,287 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FileModelAndContent } from '@shared/db/schema';
 import type { UserAndContext } from '@/auth/types';
-import {
-  RETRIEVE_ENTIRE_FILE_CHARACTER_LIMIT,
-  VECTOR_SEARCH_LIMIT,
-} from '@/configuration-text-inputs/const';
+import type { FileModel } from '@shared/db/schema';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  isWebSearchEnabledMock: vi.fn(),
-  searchWebMock: vi.fn(),
-  ingestWebContentMock: vi.fn(),
-  retrieveChunksByQueryMock: vi.fn(),
-  webScraperMock: vi.fn(),
-  dbGetExtractedFileContentMock: vi.fn(),
+  buildWebSearchToolMock: vi.fn(),
+  buildWebScraperToolMock: vi.fn(),
+  buildRetrieveEntireFileToolMock: vi.fn(),
+  buildRetrieveTextChunksToolMock: vi.fn(),
+  buildMundoSearchToolMock: vi.fn(),
+  buildMathCalculateToolMock: vi.fn(),
+  buildJsxgraphToolMock: vi.fn(),
 }));
 
-vi.mock('./websearch', () => ({
-  isWebSearchEnabled: mocks.isWebSearchEnabledMock,
-  searchWeb: mocks.searchWebMock,
+vi.mock('./tools/web-search-tool', () => ({
+  buildWebSearchTool: mocks.buildWebSearchToolMock,
+  webSearchActivity: { createStep: vi.fn() },
 }));
 
-vi.mock('../rag/ingestWebContent', () => ({
-  ingestWebContent: mocks.ingestWebContentMock,
+vi.mock('./tools/web-scraper-tool', () => ({
+  buildWebScraperTool: mocks.buildWebScraperToolMock,
+  webScraperActivity: { createStep: vi.fn() },
 }));
 
-vi.mock('../rag/rag-service', () => ({
-  retrieveChunksByQuery: mocks.retrieveChunksByQueryMock,
+vi.mock('./tools/retrieve-entire-file-tool', () => ({
+  buildRetrieveEntireFileTool: mocks.buildRetrieveEntireFileToolMock,
+  retrieveEntireFileActivity: { createStep: vi.fn() },
 }));
 
-vi.mock('../web-scraper/web-scraper', () => ({
-  webScraper: mocks.webScraperMock,
+vi.mock('./tools/retrieve-text-chunks-tool', () => ({
+  buildRetrieveTextChunksTool: mocks.buildRetrieveTextChunksToolMock,
+  retrieveTextChunksActivity: { createStep: vi.fn() },
 }));
 
-vi.mock('@shared/db/functions/files', () => ({
-  dbGetExtractedFileContent: mocks.dbGetExtractedFileContentMock,
+vi.mock('./tools/mundo-search-tool', () => ({
+  buildMundoSearchTool: mocks.buildMundoSearchToolMock,
+  mundoSearchActivity: { createStep: vi.fn() },
 }));
+
+vi.mock('./tools/math-calculate-tool', () => ({
+  buildMathCalculateTool: mocks.buildMathCalculateToolMock,
+  mathCalculateActivity: { createStep: vi.fn() },
+}));
+
+vi.mock('./tools/jsxgraph-tool', () => ({
+  buildJsxgraphTool: mocks.buildJsxgraphToolMock,
+  createPlotActivity: { createStep: vi.fn() },
+}));
+
+const modelSelection = { modelIds: ['model-1'] as [string, ...string[]], modelName: 'model-1' };
 
 const user = {
   id: 'user-1',
   userRole: 'teacher',
   federalState: {
     id: 'federal-state-1',
-    supportContacts: null,
-    chatStorageTime: 120,
-    featureToggles: {
-      isStudentAccessEnabled: true,
-      isCharacterEnabled: true,
-      isSharedChatEnabled: true,
-      isCustomGptEnabled: true,
-      isShareTemplateWithSchoolEnabled: true,
-      isAgenticChatEnabled: true,
-      isImageGenerationEnabled: true,
-      isWebSearchEnabled: false,
-    },
+    featureToggles: {},
   },
 } as UserAndContext;
 
 const relatedFileEntities = [
   {
     id: 'file-1',
-    name: 'Arbeitsblatt.pdf',
-    size: 120_000,
+    name: 'test.pdf',
+    size: 1000,
   },
-  {
-    id: 'file-2',
-    name: 'Leitfaden.txt',
-    size: 8_000,
-  },
-] as FileModelAndContent[];
+] as FileModel[];
 
-const fileContentsById = new Map<string, string>([
-  ['file-1', 'Erster Abschnitt. Zweiter Abschnitt. Dritter Abschnitt.'],
-  ['file-2', 'Kurzer Leitfaden.'],
-]);
+const createActivity = () => ({ createStep: vi.fn() });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  for (const file of relatedFileEntities) {
-    file.content = undefined;
-  }
-  mocks.isWebSearchEnabledMock.mockResolvedValue(false);
-  mocks.searchWebMock.mockResolvedValue([]);
-  mocks.dbGetExtractedFileContentMock.mockImplementation(async (fileId: string) => {
-    return fileContentsById.get(fileId) ?? '';
-  });
-  mocks.retrieveChunksByQueryMock.mockResolvedValue([
-    {
-      id: 'chunk-1',
-      content: 'Erster relevanter Abschnitt.',
-      fileId: 'file-1',
-      fileName: 'Arbeitsblatt.pdf',
-      orderIndex: 0,
-      sourceType: 'file',
-      sourceUrl: null,
+
+  // Default mock implementations - return tool-like objects
+  mocks.buildWebSearchToolMock.mockReturnValue({
+    definition: {
+      name: 'web_search',
+      description: 'Search the web',
+      parameters: { type: 'object', properties: {} },
     },
-  ]);
-  mocks.ingestWebContentMock.mockResolvedValue({ processedUrls: [], errorUrls: [] });
-  mocks.webScraperMock.mockResolvedValue({
-    name: 'Beispielseite',
-    link: 'https://example.com/article',
-    content: 'Das ist der extrahierte Inhalt.',
+    handler: vi.fn(),
+    activity: createActivity(),
+  });
+
+  mocks.buildWebScraperToolMock.mockReturnValue({
+    definition: {
+      name: 'web_scraper',
+      description: 'Scrape web pages',
+      parameters: { type: 'object', properties: {} },
+    },
+    handler: vi.fn(),
+    activity: createActivity(),
+  });
+
+  mocks.buildRetrieveEntireFileToolMock.mockReturnValue({
+    definition: {
+      name: 'retrieve_entire_file',
+      description: 'Retrieve entire file',
+      parameters: { type: 'object', properties: {} },
+    },
+    handler: vi.fn(),
+    activity: createActivity(),
+  });
+
+  mocks.buildRetrieveTextChunksToolMock.mockReturnValue({
+    definition: {
+      name: 'retrieve_text_chunks',
+      description: 'Retrieve text chunks',
+      parameters: { type: 'object', properties: {} },
+    },
+    handler: vi.fn(),
+    activity: createActivity(),
+  });
+
+  mocks.buildMundoSearchToolMock.mockReturnValue({
+    definition: {
+      name: 'mundo_search',
+      description: 'Search MUNDO',
+      parameters: { type: 'object', properties: {} },
+    },
+    handler: vi.fn(),
+    activity: createActivity(),
+  });
+
+  mocks.buildMathCalculateToolMock.mockReturnValue({
+    definition: {
+      name: 'math_calculate',
+      description: 'Calculate',
+      parameters: { type: 'object' },
+    },
+    handler: vi.fn(),
+    activity: createActivity(),
+  });
+
+  mocks.buildJsxgraphToolMock.mockReturnValue({
+    definition: {
+      name: 'create_plot',
+      description: 'Create a plot',
+      parameters: { type: 'object' },
+    },
+    handler: vi.fn(),
   });
 });
 
 describe('buildTools', () => {
-  it('adds a whole-file retrieval tool that returns the selected file content', async () => {
+  it('builds toolRegistry with all enabled tools', async () => {
     const { buildTools } = await import('./build-tools');
 
-    const { toolRegistry } = await buildTools({
-      user,
-      conversationId: 'conversation-1',
+    const { toolRegistry } = buildTools({
+      user: {
+        ...user,
+        federalState: { ...user.federalState, featureToggles: { isCalculatorEnabled: true } },
+      } as UserAndContext,
+      conversationId: 'conv-1',
       relatedFileEntities,
+      allowWebTools: true,
+      modelSelection,
+      apiKeyId: 'api-key-1',
     });
 
-    expect(Object.keys(toolRegistry)).toContain('retrieve_entire_file');
-    const retrieveEntireFileTool = toolRegistry.retrieve_entire_file!;
-
-    expect(retrieveEntireFileTool.definition).toMatchObject({
-      name: 'retrieve_entire_file',
-    });
-    expect(retrieveEntireFileTool.definition.description).toContain(
-      'Arbeitsblatt.pdf (120000 bytes)',
-    );
-    expect(retrieveEntireFileTool.definition.description).toContain('Leitfaden.txt (8000 bytes)');
-    expect(retrieveEntireFileTool.definition.parameters).toMatchObject({
-      required: ['fileName'],
-    });
-
-    const result = await retrieveEntireFileTool.handler({
-      fileName: 'Arbeitsblatt.pdf',
-    });
-
-    expect(mocks.dbGetExtractedFileContentMock).toHaveBeenCalledWith('file-1');
-    expect(JSON.parse(result)).toEqual({
-      fileName: 'Arbeitsblatt.pdf',
-      content: 'Erster Abschnitt. Zweiter Abschnitt. Dritter Abschnitt.',
-      truncated: false,
-      characterCount: expect.any(Number),
-      maxCharacters: RETRIEVE_ENTIRE_FILE_CHARACTER_LIMIT,
-      error: null,
-    });
+    expect(Object.keys(toolRegistry)).toEqual([
+      'math_calculate',
+      'web_search',
+      'web_scraper',
+      'retrieve_entire_file',
+      'retrieve_text_chunks',
+    ]);
   });
 
-  it('caps whole-file retrieval at the configured character limit', async () => {
+  it('returns no calculator tool when disabled', async () => {
     const { buildTools } = await import('./build-tools');
-
-    const veryLongFile = {
-      id: 'file-3',
-      name: 'Grossdatei.txt',
-    } as FileModelAndContent;
-    fileContentsById.set('file-3', 'a'.repeat(100_001));
-
-    const { toolRegistry } = await buildTools({
+    const { toolRegistry } = buildTools({
       user,
-      conversationId: 'conversation-1',
-      relatedFileEntities: [veryLongFile],
-    });
-
-    const result = await toolRegistry.retrieve_entire_file!.handler({
-      fileName: 'Grossdatei.txt',
-    });
-
-    const parsed = JSON.parse(result) as {
-      truncated: boolean;
-      maxCharacters: number;
-      error: string | null;
-      characterCount: number;
-      content: string | null;
-    };
-
-    expect(parsed.truncated).toBe(true);
-    expect(parsed.maxCharacters).toBe(RETRIEVE_ENTIRE_FILE_CHARACTER_LIMIT);
-    expect(parsed.characterCount).toBeGreaterThan(RETRIEVE_ENTIRE_FILE_CHARACTER_LIMIT);
-    expect(parsed.error).toContain('Zeichenlimits');
-    expect(parsed.content).not.toBeNull();
-  });
-
-  it('adds a chunk retrieval tool that exposes file names and forwards the search query', async () => {
-    const { buildTools } = await import('./build-tools');
-
-    const { toolRegistry } = await buildTools({
-      user,
-      conversationId: 'conversation-1',
       relatedFileEntities,
-      attachedLinks: [],
+      allowWebTools: false,
+      modelSelection,
+      apiKeyId: 'api-key-1',
     });
-
-    expect(Object.keys(toolRegistry)).toContain('retrieve_text_chunks');
-    const retrieveTextChunksTool = toolRegistry.retrieve_text_chunks!;
-
-    expect(retrieveTextChunksTool.definition).toMatchObject({
-      name: 'retrieve_text_chunks',
-    });
-    expect(retrieveTextChunksTool.definition.description).toContain(
-      'Arbeitsblatt.pdf (120000 bytes)',
-    );
-    expect(retrieveTextChunksTool.definition.description).toContain('Leitfaden.txt (8000 bytes)');
-    expect(retrieveTextChunksTool.definition.parameters).toMatchObject({
-      required: ['search', 'limit'],
-      properties: {
-        limit: {
-          maximum: VECTOR_SEARCH_LIMIT,
-        },
-      },
-    });
-
-    const result = await retrieveTextChunksTool.handler({
-      search: 'relevante Passage',
-      limit: VECTOR_SEARCH_LIMIT + 5,
-    });
-
-    expect(mocks.retrieveChunksByQueryMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        searchQuery: 'relevante Passage',
-        federalStateId: 'federal-state-1',
-        relatedFileEntities,
-        limit: VECTOR_SEARCH_LIMIT,
-      }),
-    );
-    expect(JSON.parse(result)).toEqual({
-      chunks: [
-        {
-          fileName: 'Arbeitsblatt.pdf',
-          orderIndex: 0,
-          content: 'Erster relevanter Abschnitt.',
-        },
-      ],
-      error: null,
-    });
+    expect(toolRegistry).not.toHaveProperty('math_calculate');
+    expect(mocks.buildMathCalculateToolMock).not.toHaveBeenCalled();
   });
 
-  it('adds a chunk retrieval tool for linked pages and forwards source urls', async () => {
-    mocks.ingestWebContentMock.mockResolvedValueOnce({
-      processedUrls: ['https://example.com/shared-page'],
-      errorUrls: [],
-    });
+  it('skips tools that return null', async () => {
+    mocks.buildWebSearchToolMock.mockReturnValue(null);
+    mocks.buildWebScraperToolMock.mockReturnValue(null);
 
     const { buildTools } = await import('./build-tools');
 
-    const { toolRegistry } = await buildTools({
+    const { toolRegistry } = buildTools({
       user,
-      conversationId: 'conversation-1',
-      relatedFileEntities: [],
-      sourceUrls: ['https://example.com/shared-page'],
+      conversationId: 'conv-1',
+      relatedFileEntities,
+      allowWebTools: true,
+      modelSelection,
+      apiKeyId: 'api-key-1',
     });
 
-    expect(Object.keys(toolRegistry)).toContain('retrieve_text_chunks');
-    const retrieveTextChunksTool = toolRegistry.retrieve_text_chunks!;
-
-    expect(retrieveTextChunksTool.definition.description).toContain(
-      'https://example.com/shared-page',
-    );
-
-    await retrieveTextChunksTool.handler({
-      search: 'verlinkter Inhalt',
-    });
-
-    expect(mocks.retrieveChunksByQueryMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        searchQuery: 'verlinkter Inhalt',
-        federalStateId: 'federal-state-1',
-        relatedFileEntities: [],
-        sourceUrls: ['https://example.com/shared-page'],
-      }),
-    );
+    expect(Object.keys(toolRegistry)).toEqual(['retrieve_entire_file', 'retrieve_text_chunks']);
   });
 
-  it('ingests linked pages before retrieving chunks', async () => {
-    mocks.retrieveChunksByQueryMock.mockResolvedValueOnce([
-      {
-        id: 'chunk-2',
-        content: 'Neu abgerufener Seitenabschnitt.',
-        fileId: null,
-        fileName: null,
-        orderIndex: 0,
-        sourceType: 'webpage',
-        sourceUrl: 'https://example.com/shared-page',
-      },
-    ]);
-    mocks.ingestWebContentMock.mockResolvedValueOnce({
-      processedUrls: ['https://example.com/shared-page'],
-      errorUrls: [],
-    });
-
+  it('does not build web tools when allowWebTools is false', async () => {
     const { buildTools } = await import('./build-tools');
 
-    const { toolRegistry } = await buildTools({
+    const { toolRegistry } = buildTools({
       user,
-      conversationId: 'conversation-1',
-      relatedFileEntities: [],
-      sourceUrls: ['https://example.com/shared-page'],
+      conversationId: 'conv-1',
+      relatedFileEntities,
+      allowWebTools: false,
+      modelSelection,
+      apiKeyId: 'api-key-1',
     });
 
-    const result = await toolRegistry.retrieve_text_chunks!.handler({
-      search: 'verlinkter Inhalt',
-    });
-
-    expect(mocks.ingestWebContentMock).toHaveBeenCalledWith({
-      urls: ['https://example.com/shared-page'],
-      federalStateId: 'federal-state-1',
-    });
-    expect(mocks.retrieveChunksByQueryMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        searchQuery: 'verlinkter Inhalt',
-        federalStateId: 'federal-state-1',
-        relatedFileEntities: [],
-        sourceUrls: ['https://example.com/shared-page'],
-      }),
-    );
-    expect(JSON.parse(result)).toEqual({
-      chunks: [
-        {
-          fileName: null,
-          orderIndex: 0,
-          content: 'Neu abgerufener Seitenabschnitt.',
-        },
-      ],
-      error: null,
-    });
+    expect(Object.keys(toolRegistry)).toEqual(['retrieve_entire_file', 'retrieve_text_chunks']);
+    expect(mocks.buildWebSearchToolMock).not.toHaveBeenCalled();
+    expect(mocks.buildWebScraperToolMock).not.toHaveBeenCalled();
   });
 
-  it('adds a web scraper tool and returns scraped page content', async () => {
-    mocks.isWebSearchEnabledMock.mockResolvedValue(true);
+  it('does not add mundo_search when allowMundoSearch is not set', async () => {
     const { buildTools } = await import('./build-tools');
 
-    const { toolRegistry } = await buildTools({
+    const { toolRegistry } = buildTools({
       user,
-      conversationId: 'conversation-1',
-      relatedFileEntities: [],
-      attachedLinks: [],
+      conversationId: 'conv-1',
+      relatedFileEntities,
+      allowWebTools: true,
+      allowMundoSearch: false,
+      modelSelection,
+      apiKeyId: 'api-key-1',
     });
 
-    const webSearchTool = toolRegistry.web_search!;
-    const webScraperTool = toolRegistry.web_scraper!;
-
-    expect(Object.keys(toolRegistry).sort()).toEqual(['web_scraper', 'web_search']);
-    expect(webSearchTool.definition).toMatchObject({
-      name: 'web_search',
-    });
-    expect(webScraperTool.definition).toMatchObject({
-      name: 'web_scraper',
-    });
-    expect(webScraperTool.definition.description).toContain('single webpage URL');
-    expect(webScraperTool.definition.parameters).toMatchObject({
-      required: ['url'],
-      properties: {
-        url: {
-          type: 'string',
-        },
-      },
-    });
-
-    const result = await webScraperTool.handler({
-      url: 'https://example.com/article',
-    });
-
-    expect(mocks.webScraperMock).toHaveBeenCalledWith('https://example.com/article');
-    expect(JSON.parse(result)).toEqual({
-      title: 'Beispielseite',
-      url: 'https://example.com/article',
-      content: 'Das ist der extrahierte Inhalt.',
-      error: null,
-    });
+    expect(Object.keys(toolRegistry)).not.toContain('mundo_search');
+    expect(mocks.buildMundoSearchToolMock).not.toHaveBeenCalled();
   });
 
-  it('adds a web search tool and returns search results as JSON', async () => {
-    mocks.isWebSearchEnabledMock.mockResolvedValue(true);
-    mocks.searchWebMock.mockResolvedValue([
-      {
-        name: 'Beispielartikel',
-        url: 'https://example.com/search-result',
-        content: 'Kurzer Auszug aus dem Suchergebnis.',
-      },
-    ]);
-
+  it('adds mundo_search when allowMundoSearch is true', async () => {
     const { buildTools } = await import('./build-tools');
 
-    const { toolRegistry } = await buildTools({
+    const { toolRegistry } = buildTools({
       user,
-      conversationId: 'conversation-1',
-      relatedFileEntities: [],
-      attachedLinks: [],
+      conversationId: 'conv-1',
+      relatedFileEntities,
+      allowWebTools: true,
+      allowMundoSearch: true,
+      modelSelection,
+      apiKeyId: 'api-key-1',
     });
 
-    expect(Object.keys(toolRegistry).sort()).toEqual(['web_scraper', 'web_search']);
+    expect(Object.keys(toolRegistry)).toContain('mundo_search');
+    expect(mocks.buildMundoSearchToolMock).toHaveBeenCalledTimes(1);
+  });
 
-    const result = await toolRegistry.web_search!.handler({
-      query: 'aktuelle information',
+  it('does not add create_plot when isJsxGraphEnabled is not set', async () => {
+    const { buildTools } = await import('./build-tools');
+
+    const { toolRegistry } = buildTools({
+      user,
+      relatedFileEntities,
+      allowWebTools: false,
+      modelSelection,
+      apiKeyId: 'api-key-1',
     });
 
-    expect(mocks.searchWebMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: 'aktuelle information',
-        conversationId: 'conversation-1',
-        userId: 'user-1',
-      }),
-    );
-    expect(JSON.parse(result)).toEqual({
-      results: [
-        {
-          title: 'Beispielartikel',
-          url: 'https://example.com/search-result',
-          content: 'Kurzer Auszug aus dem Suchergebnis.',
-        },
-      ],
-      error: null,
+    expect(toolRegistry).not.toHaveProperty('create_plot');
+    expect(mocks.buildJsxgraphToolMock).not.toHaveBeenCalled();
+  });
+
+  it('adds create_plot with the current model and API key when isJsxGraphEnabled is true', async () => {
+    const { buildTools } = await import('./build-tools');
+
+    const { toolRegistry } = buildTools({
+      user: {
+        ...user,
+        federalState: { ...user.federalState, featureToggles: { isJsxGraphEnabled: true } },
+      } as UserAndContext,
+      relatedFileEntities,
+      allowWebTools: false,
+      modelSelection,
+      apiKeyId: 'api-key-1',
+    });
+
+    expect(toolRegistry).toHaveProperty('create_plot');
+    expect(mocks.buildJsxgraphToolMock).toHaveBeenCalledWith({
+      modelSelection,
+      apiKeyId: 'api-key-1',
     });
   });
 });

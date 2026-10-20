@@ -10,6 +10,8 @@ import { requireAuth } from '@/auth/requireAuth';
 import { DefaultPageLayout } from '@/components/layout/default-page-layout';
 import type { Metadata } from 'next';
 import { getTranslations } from 'next-intl/server';
+import { ImageAspectRatioProvider } from '@/components/image-generation/image-aspect-ratio-provider';
+import { generateUUID } from '@shared/utils/uuid';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,18 +32,27 @@ export default async function ImageGenerationPage() {
   const imageModels = await getAvailableImageModelsForFederalState({
     federalStateId: federalState.id,
   });
-  const selectedModel = getDefaultImageModel(imageModels);
+  const selectedModel = await getDefaultImageModel({
+    imageModels,
+    federalStateId: federalState.id,
+  });
 
   return (
-    <ImageModelsProvider models={imageModels} defaultImageModel={selectedModel}>
+    <ImageModelsProvider
+      key={generateUUID()}
+      models={imageModels}
+      defaultImageModel={selectedModel}
+    >
       <ImageStyleProvider>
-        <DefaultPageLayout layoutConfig={{ layout: 'image' }}>
-          <div className="flex flex-col h-full">
-            <div className="flex-1 overflow-auto">
-              <ImageGenerationChat />
+        <ImageAspectRatioProvider>
+          <DefaultPageLayout layoutConfig={{ layout: 'image' }}>
+            <div className="flex flex-col h-full">
+              <div className="flex-1 overflow-auto">
+                <ImageGenerationChat />
+              </div>
             </div>
-          </div>
-        </DefaultPageLayout>
+          </DefaultPageLayout>
+        </ImageAspectRatioProvider>
       </ImageStyleProvider>
     </ImageModelsProvider>
   );

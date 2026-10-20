@@ -1,4 +1,7 @@
 import { getCharacterForEditView } from '@shared/characters/character-service';
+import { getCommunityTemplateRequestWithEvents } from '@shared/community-templates/community-template-service';
+import { getSpeechModelVoices } from '@shared/llm-models/llm-model-service';
+import { isWebSearchAvailableForFederalState } from '@/app/api/chat/websearch';
 import { requireAuth } from '@/auth/requireAuth';
 import { handleErrorInServerComponent } from '@/error/handle-error-in-server-component';
 import { WebSource } from '@shared/db/types';
@@ -21,18 +24,29 @@ export default async function Page(props: PageProps<'/characters/editor/[charact
   const { characterId } = await props.params;
   const { user, federalState } = await requireAuth();
 
-  const { character, relatedFiles, maybeSignedPictureUrl, maxBudget, usedBudget } =
-    await getCharacterForEditView({
-      characterId,
-      user,
-      federalState,
-    }).catch(handleErrorInServerComponent);
+  const {
+    character,
+    relatedFiles,
+    maybeSignedPictureUrl,
+    maxBudget,
+    usedBudget,
+    budgetUsedBySharedChat,
+  } = await getCharacterForEditView({
+    characterId,
+    user,
+    federalState,
+  }).catch(handleErrorInServerComponent);
 
   const readOnly = user.id !== character.userId;
 
   if (readOnly) {
     redirect(`/characters/${characterId}`);
   }
+
+  const communityTemplateRequest = await getCommunityTemplateRequestWithEvents({
+    entityRef: { entityType: 'character', entityId: characterId },
+    user,
+  }).catch(handleErrorInServerComponent);
 
   const initialLinks = character.attachedLinks
     .filter((l) => l !== '')
@@ -44,6 +58,9 @@ export default async function Page(props: PageProps<'/characters/editor/[charact
         }) as WebSource,
     );
 
+  const isSpeechAvailable = federalState.featureToggles.isSpeechModelEnabled === true;
+  const speechVoices = isSpeechAvailable ? await getSpeechModelVoices() : [];
+
   return (
     <DefaultPageLayout layoutConfig={{ layout: 'form' }}>
       <CharacterEdit
@@ -51,8 +68,13 @@ export default async function Page(props: PageProps<'/characters/editor/[charact
         relatedFiles={relatedFiles}
         initialLinks={initialLinks}
         avatarPictureUrl={maybeSignedPictureUrl}
+        initialCommunityTemplateRequest={communityTemplateRequest}
         usedBudget={usedBudget ?? 0}
         maxBudget={maxBudget ?? 500}
+        budgetUsedBySharedChat={budgetUsedBySharedChat}
+        isWebSearchAvailable={isWebSearchAvailableForFederalState(federalState.featureToggles)}
+        isSpeechAvailable={isSpeechAvailable}
+        speechVoices={speechVoices}
       />
     </DefaultPageLayout>
   );

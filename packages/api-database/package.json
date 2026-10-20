@@ -7,15 +7,18 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./bifrost-provider-sync": "./src/bifrost-provider-sync/index.ts",
+    "./bifrost-provider-sync/error": "./src/bifrost-provider-sync/error.ts",
     "./llm-model": "./src/llm-model/index.ts",
+    "./types": "./src/types.ts",
     "./utils": "./src/api-utils/index.ts"
   },
   "scripts": {
-    "db:generate": "dotenv -e ../../apps/api/.env.local -- drizzle-kit generate",
+    "db:generate": "dotenvx run -f ../../apps/api/.env.local -f ../../apps/api/.env.development -- drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate --config=./drizzle.config.ts",
-    "db:migrate:local": "dotenv -e ../../apps/api/.env.local -- drizzle-kit migrate --config=./drizzle.config.ts",
-    "db:seed": "dotenv -e ../../apps/api/.env.local -- tsx src/seed.ts",
-    "db:seed:from-stage": "dotenv -e ../../apps/api/.env.local -- tsx src/seed-from-stage.ts",
+    "db:migrate:local": "dotenvx run -f ../../apps/api/.env.local -f ../../apps/api/.env.development -- drizzle-kit migrate --config=./drizzle.config.ts",
+    "db:seed": "dotenvx run -f ../../apps/api/.env.local -f ../../apps/api/.env.development -- tsx src/seed.ts",
+    "db:seed:from-stage": "dotenvx run -f ../../apps/api/.env.local -f ../../apps/api/.env.development -f ../../apps/admin/.env.development -- tsx src/seed-from-stage.ts",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -23,25 +26,26 @@
     "types": "tsc --noEmit"
   },
   "dependencies": {
+    "@ais-chat/shared-core": "workspace:*",
     "@t3-oss/env-core": "0.13.11",
     "bcryptjs": "3.0.3",
-    "drizzle-orm": "0.45.2",
+    "drizzle-orm": "0.45.3",
     "drizzle-zod": "0.8.3",
-    "nanoid": "5.1.11",
-    "pg": "8.21.0",
-    "zod": "4.4.3"
+    "nanoid": "6.0.1",
+    "pg": "8.23.1",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@ais-chat/eslint-config": "workspace:*",
     "@ais-chat/typescript-config": "workspace:*",
-    "@types/node": "24.13.2",
-    "@types/pg": "8.20.0",
-    "@vitest/coverage-v8": "4.1.8",
-    "dotenv-cli": "11.0.0",
-    "drizzle-kit": "0.31.10",
-    "eslint": "9.39.4",
-    "tsx": "4.22.4",
+    "@dotenvx/dotenvx": "2.32.4",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "@vitest/coverage-v8": "5.0.4",
+    "drizzle-kit": "0.31.11",
+    "eslint": "10.8.1",
+    "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "vitest": "4.1.8"
+    "vitest": "5.0.4"
   }
 }

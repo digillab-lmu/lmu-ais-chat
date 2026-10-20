@@ -38,6 +38,7 @@ yarn-error.log*
 .env*
 !.env.example
 !.env.e2e
+!.env.development
 
 # vercel
 .vercel
@@ -51,6 +52,7 @@ certificates
 
 playwright-report/
 .playwright-auth/
+.playwright-mcp/
 test-results/
 
 # Sentry Config File
