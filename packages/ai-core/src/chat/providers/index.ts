@@ -1,10 +1,13 @@
 import {
-  constructAzureChatCompletionGenerationFn,
-  constructAzureChatCompletionStreamFn,
   constructAzureResponsesGenerationFn,
   constructAzureResponsesStreamFn,
   constructAzureResponsesAgenticStreamFn,
 } from './azure';
+import {
+  constructBifrostAgenticStreamFn,
+  constructBifrostTextGenerationFn,
+  constructBifrostTextStreamFn,
+} from './bifrost';
 import {
   constructGoogleAgenticStreamFn,
   constructGoogleTextGenerationFn,
@@ -32,10 +35,7 @@ import { ProviderConfigurationError } from '../../errors';
 
 function getTextGenerationFnByModel({ model }: { model: AiModel }): TextGenerationFn | undefined {
   if (model.provider === 'azure') {
-    if (['gpt-5', 'gpt-5-mini', 'gpt-5-nano'].includes(model.name)) {
-      return constructAzureResponsesGenerationFn(model);
-    }
-    return constructAzureChatCompletionGenerationFn(model);
+    return constructAzureResponsesGenerationFn(model);
   }
   if (model.provider === 'ionos') {
     return constructIonosTextGenerationFn(model);
@@ -46,17 +46,16 @@ function getTextGenerationFnByModel({ model }: { model: AiModel }): TextGenerati
   if (model.provider === 'openai') {
     return constructOpenAITextGenerationFn(model);
   }
+  if (model.provider === 'bifrost') {
+    return constructBifrostTextGenerationFn(model);
+  }
 
   return undefined;
 }
 
 function getTextStreamFnByModel({ model }: { model: AiModel }): TextStreamFn | undefined {
   if (model.provider === 'azure') {
-    // GPT-5 is used with Responses endpoint
-    if (['gpt-5', 'gpt-5-mini', 'gpt-5-nano'].includes(model.name)) {
-      return constructAzureResponsesStreamFn(model);
-    }
-    return constructAzureChatCompletionStreamFn(model);
+    return constructAzureResponsesStreamFn(model);
   }
   if (model.provider === 'ionos') {
     return constructIonosTextStreamFn(model);
@@ -66,6 +65,9 @@ function getTextStreamFnByModel({ model }: { model: AiModel }): TextStreamFn | u
   }
   if (model.provider === 'openai') {
     return constructOpenAITextStreamFn(model);
+  }
+  if (model.provider === 'bifrost') {
+    return constructBifrostTextStreamFn(model);
   }
 
   return undefined;
@@ -83,6 +85,9 @@ function getAgenticStreamFnByModel({ model }: { model: AiModel }): AgenticStream
   }
   if (model.provider === 'google') {
     return constructGoogleAgenticStreamFn(model);
+  }
+  if (model.provider === 'bifrost') {
+    return constructBifrostAgenticStreamFn(model);
   }
   return undefined; // HINT: Add support for other providers here
 }

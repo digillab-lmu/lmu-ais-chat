@@ -46,7 +46,7 @@ vi.mock('@anthropic-ai/vertex-sdk', () => ({
   AnthropicVertex: MockAnthropicVertex,
 }));
 
-vi.mock('@sentry/core', () => ({
+vi.mock('@sentry/server-utils', () => ({
   instrumentAnthropicAiClient: vi.fn((client) => client),
 }));
 
@@ -60,9 +60,13 @@ function createGoogleAnthropicModel(projectId = 'test-project', location = 'us-c
     organizationId: 'org-test',
     createdAt: new Date(),
     supportedImageFormats: ['image/png', 'image/jpeg'],
+    imageGenerationConfig: null,
+    modelConfig: null,
+    safetyFilterEnabled: true,
     additionalParameters: {},
     isNew: false,
     isDeleted: false,
+    useBifrost: true,
     setting: {
       provider: 'google',
       projectId,
@@ -131,13 +135,16 @@ describe('constructGoogleAnthropicTextGenerationFn', () => {
       model: 'anthropic/claude-3-5-sonnet-v2@20241022',
     });
 
-    expect(createMock).toHaveBeenCalledWith({
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
-      model: 'claude-3-5-sonnet-v2@20241022',
-      stream: false,
-      system: 'You are helpful',
-    });
+    expect(createMock).toHaveBeenCalledWith(
+      {
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
+        model: 'claude-3-5-sonnet-v2@20241022',
+        stream: false,
+        system: 'You are helpful',
+      },
+      expect.anything(),
+    );
   });
 
   it('should use default maxTokens of 4096 when not specified', async () => {
@@ -157,6 +164,7 @@ describe('constructGoogleAnthropicTextGenerationFn', () => {
       expect.objectContaining({
         max_tokens: 4096,
       }),
+      expect.anything(),
     );
   });
 
@@ -177,6 +185,7 @@ describe('constructGoogleAnthropicTextGenerationFn', () => {
       expect.objectContaining({
         model: 'claude-sonnet',
       }),
+      expect.anything(),
     );
   });
 
@@ -205,6 +214,7 @@ describe('constructGoogleAnthropicTextGenerationFn', () => {
         ],
         system: 'System prompt',
       }),
+      expect.anything(),
     );
   });
 
@@ -290,6 +300,7 @@ describe('constructGoogleAnthropicTextGenerationFn', () => {
           },
         ],
       }),
+      expect.anything(),
     );
   });
 
@@ -326,6 +337,7 @@ describe('constructGoogleAnthropicTextGenerationFn', () => {
           },
         ],
       }),
+      expect.anything(),
     );
   });
 
@@ -372,6 +384,7 @@ describe('constructGoogleAnthropicTextGenerationFn', () => {
           },
         ],
       }),
+      expect.anything(),
     );
   });
 
@@ -650,6 +663,7 @@ describe('constructGoogleAnthropicAgenticStreamFn', () => {
           }),
         ],
       }),
+      expect.anything(),
     );
 
     expect(events).toEqual([
@@ -722,10 +736,18 @@ describe('constructGoogleAnthropicAgenticStreamFn', () => {
           },
           {
             role: 'user',
-            content: [{ type: 'tool_result', tool_use_id: 'toolu_123', content: '72°F and sunny' }],
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_123',
+                content: '72°F and sunny',
+                is_error: false,
+              },
+            ],
           },
         ],
       }),
+      expect.anything(),
     );
 
     expect(events).toEqual([{ type: 'text', delta: 'It is sunny' }]);
@@ -736,9 +758,13 @@ describe('constructGoogleAnthropicAgenticStreamFn', () => {
 
     streamMock.mockReturnValue({
       [Symbol.asyncIterator]: async function* () {
-        // empty stream
+        yield { type: 'message_stop' };
       },
-      finalMessage: finalMessageMock,
+      finalMessage: vi.fn().mockResolvedValue({
+        content: [],
+        usage: { input_tokens: 10, output_tokens: 5 },
+        stop_reason: 'end_turn',
+      }),
     });
 
     const generateAgenticStream = constructGoogleAnthropicAgenticStreamFn(model);
@@ -778,12 +804,84 @@ describe('constructGoogleAnthropicAgenticStreamFn', () => {
           {
             role: 'user',
             content: [
-              { type: 'tool_result', tool_use_id: 'toolu_1', content: '72°F sunny' },
-              { type: 'tool_result', tool_use_id: 'toolu_2', content: '65°F rainy' },
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_1',
+                content: '72°F sunny',
+                is_error: false,
+              },
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_2',
+                content: '65°F rainy',
+                is_error: false,
+              },
             ],
           },
         ]),
       }),
+      expect.anything(),
+    );
+  });
+
+  it('should set is_error to true for tool results with errors', async () => {
+    const model = createGoogleAnthropicModel();
+
+    streamMock.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        yield { type: 'message_stop' };
+      },
+      finalMessage: vi.fn().mockResolvedValue({
+        content: [],
+        usage: { input_tokens: 10, output_tokens: 5 },
+        stop_reason: 'end_turn',
+      }),
+    });
+
+    const generateAgenticStream = constructGoogleAnthropicAgenticStreamFn(model);
+    const messages: Message[] = [
+      { role: 'user', content: 'What is the weather in InvalidCity?' },
+      {
+        role: 'assistant',
+        content: 'Let me check',
+        toolCalls: [{ id: 'toolu_123', name: 'get_weather', arguments: '{"city":"InvalidCity"}' }],
+      },
+      { role: 'tool', content: 'Error: City not found', toolCallId: 'toolu_123' },
+    ];
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _event of generateAgenticStream({
+      messages,
+      model: 'anthropic/claude',
+      tools: [
+        {
+          name: 'get_weather',
+          description: 'Get weather',
+          parameters: { properties: { city: { type: 'string' } }, required: ['city'] },
+        },
+      ],
+    })) {
+      // consume stream
+    }
+
+    // Verify tool result with error has is_error: true (detected from "Error:" prefix)
+    expect(streamMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_123',
+                content: 'Error: City not found',
+                is_error: true,
+              },
+            ],
+          },
+        ]),
+      }),
+      expect.anything(),
     );
   });
 
@@ -851,5 +949,168 @@ describe('constructGoogleAnthropicAgenticStreamFn', () => {
         // consume stream
       }
     }).rejects.toThrow(AiGenerationError);
+  });
+
+  it('should not duplicate text when both streaming deltas and finalMessage contain text', async () => {
+    const model = createGoogleAnthropicModel();
+
+    finalMessageMock.mockResolvedValue({
+      content: [
+        { type: 'text', text: 'Hello world' }, // This is the FULL text (already streamed as deltas)
+      ],
+      usage: { input_tokens: 10, output_tokens: 20 },
+      stop_reason: 'end_turn',
+    });
+
+    streamMock.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        // Text is streamed as deltas
+        yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } };
+        yield { type: 'content_block_delta', delta: { type: 'text_delta', text: ' world' } };
+        // Then message_stop with finalMessage containing the same text
+        yield { type: 'message_stop' };
+      },
+      finalMessage: finalMessageMock,
+    });
+
+    const generateAgenticStream = constructGoogleAnthropicAgenticStreamFn(model);
+    const events = [];
+
+    for await (const event of generateAgenticStream({
+      messages: [{ role: 'user', content: 'test' }],
+      model: 'anthropic/claude',
+    })) {
+      events.push(event);
+    }
+
+    // Should only have the streamed deltas + finish, NOT duplicate text from finalMessage
+    expect(events).toEqual([
+      { type: 'text', delta: 'Hello' },
+      { type: 'text', delta: ' world' },
+      {
+        type: 'finish',
+        usage: {
+          promptTokens: 10,
+          completionTokens: 20,
+          totalTokens: 30,
+        },
+      },
+    ]);
+
+    // Verify the text would concatenate to "Hello world" once, not twice
+    const textDeltas = events.filter((e) => e.type === 'text').map((e) => e.delta);
+    expect(textDeltas.join('')).toBe('Hello world');
+  });
+
+  it('should yield text from finalMessage when no deltas were streamed (very short response)', async () => {
+    const model = createGoogleAnthropicModel();
+
+    finalMessageMock.mockResolvedValue({
+      content: [
+        { type: 'text', text: 'OK' }, // Very short response that was not streamed as deltas
+      ],
+      usage: { input_tokens: 10, output_tokens: 2 },
+      stop_reason: 'end_turn',
+    });
+
+    streamMock.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        // No content_block_delta events, just message_stop
+        yield { type: 'message_stop' };
+      },
+      finalMessage: finalMessageMock,
+    });
+
+    const generateAgenticStream = constructGoogleAnthropicAgenticStreamFn(model);
+    const events = [];
+
+    for await (const event of generateAgenticStream({
+      messages: [{ role: 'user', content: 'test' }],
+      model: 'anthropic/claude',
+    })) {
+      events.push(event);
+    }
+
+    // Should have the text from finalMessage since no deltas were streamed
+    expect(events).toEqual([
+      { type: 'text', delta: 'OK' },
+      {
+        type: 'finish',
+        usage: {
+          promptTokens: 10,
+          completionTokens: 2,
+          totalTokens: 12,
+        },
+      },
+    ]);
+  });
+
+  it('should report the usage seen so far when the stream is aborted', async () => {
+    const model = createGoogleAnthropicModel();
+    const abortController = new AbortController();
+
+    streamMock.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        yield { type: 'message_start', message: { usage: { input_tokens: 42, output_tokens: 0 } } };
+        yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Partial' } };
+        yield { type: 'message_delta', usage: { output_tokens: 7 } };
+        abortController.abort();
+        throw Object.assign(new Error('Request was aborted.'), { name: 'AbortError' });
+      },
+      finalMessage: finalMessageMock,
+    });
+
+    const generateAgenticStream = constructGoogleAnthropicAgenticStreamFn(model);
+    const events = [];
+
+    for await (const event of generateAgenticStream({
+      messages: [{ role: 'user', content: 'test' }],
+      model: 'anthropic/claude',
+      abortSignal: abortController.signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: 'text', delta: 'Partial' },
+      {
+        type: 'finish',
+        usage: {
+          promptTokens: 42,
+          completionTokens: 7,
+          totalTokens: 49,
+        },
+      },
+    ]);
+  });
+
+  it('should estimate usage when the stream is aborted before any usage was reported', async () => {
+    const model = createGoogleAnthropicModel();
+    const abortController = new AbortController();
+
+    streamMock.mockReturnValue({
+      [Symbol.asyncIterator]: async function* () {
+        yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Partial' } };
+        abortController.abort();
+        throw Object.assign(new Error('Request was aborted.'), { name: 'AbortError' });
+      },
+      finalMessage: finalMessageMock,
+    });
+
+    const generateAgenticStream = constructGoogleAnthropicAgenticStreamFn(model);
+    const events = [];
+
+    for await (const event of generateAgenticStream({
+      messages: [{ role: 'user', content: 'test' }],
+      model: 'anthropic/claude',
+      abortSignal: abortController.signal,
+    })) {
+      events.push(event);
+    }
+
+    const finish = events[1];
+    expect(finish?.type).toBe('finish');
+    expect(finish?.type === 'finish' && finish.usage.estimated).toBe(true);
+    expect(finish?.type === 'finish' && finish.usage.promptTokens).toBeGreaterThan(0);
   });
 });

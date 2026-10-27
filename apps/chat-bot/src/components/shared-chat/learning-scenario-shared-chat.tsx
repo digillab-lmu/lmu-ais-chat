@@ -1,39 +1,115 @@
 'use client';
 
 import { useLearningScenarioChat } from '@/hooks/use-chat-hooks';
-import { useTranslations } from 'next-intl';
+import { fetchSpeechStream } from '@/utils/audio/fetch-speech-stream';
+import { loadSharedChat } from '@/utils/shared-chat-storage';
 import { LearningScenarioWithShareDataModel } from '@shared/db/schema';
-import { useCheckStatusCode } from '@/hooks/use-response-status';
+import { useTranslations } from 'next-intl';
+import { z } from 'zod';
 import GenericSharedChat from './generic-shared-chat';
 
 export default function LearningScenarioSharedChat({
   avatarPictureUrl,
+  isSpeechModelEnabled,
   ...sharedSchoolChat
-}: LearningScenarioWithShareDataModel & { inviteCode: string; avatarPictureUrl?: string }) {
+}: LearningScenarioWithShareDataModel & {
+  inviteCode: string;
+  avatarPictureUrl?: string;
+  isSpeechModelEnabled: boolean;
+}) {
   const t = useTranslations('learning-scenarios.shared');
   const { id, inviteCode, modelId } = sharedSchoolChat;
 
-  const errorState = useCheckStatusCode();
+  const initialMessages =
+    loadSharedChat(inviteCode)?.messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      activitySteps: message.activitySteps,
+    })) ?? [];
+
   const chat = useLearningScenarioChat({
     learningScenarioId: id,
     inviteCode,
-    initialMessages: [],
+    initialMessages,
     modelId: modelId ?? undefined,
-    onError: errorState.handleError,
   });
+
+  async function uploadSharedLearningScenarioFile(
+    file: File,
+    sharedSessionId: string,
+  ): Promise<{ fileId: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('inviteCode', inviteCode);
+    formData.append('entityType', 'learningScenario');
+    formData.append('entityId', id);
+    formData.append('sharedSessionId', sharedSessionId);
+
+    const response = await fetch('/api/v1/shared-chat/files', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error('Could not upload file');
+    }
+
+    const json = await response.json();
+    const parsed = z.object({ fileId: z.string() }).parse(JSON.parse(json?.body));
+
+    return {
+      fileId: parsed.fileId,
+    };
+  }
+
+  async function generateSharedLearningScenarioSpeech(
+    text: string,
+    _isInitialMessage: boolean,
+    signal?: AbortSignal,
+  ): Promise<Blob> {
+    const response = await fetch('/api/v1/shared-chat/speech', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify({ text, inviteCode, entityType: 'learningScenario', entityId: id }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Could not generate speech');
+    }
+
+    return response.blob();
+  }
+
+  async function generateSharedLearningScenarioSpeechStream(
+    text: string,
+    { signal }: { signal: AbortSignal },
+  ): Promise<ReadableStream<Uint8Array>> {
+    return fetchSpeechStream(
+      '/api/v1/shared-chat/speech/stream',
+      { text, inviteCode, entityType: 'learningScenario', entityId: id },
+      signal,
+    );
+  }
 
   return (
     <GenericSharedChat
       headerT={t}
       entity={sharedSchoolChat}
       inviteCode={inviteCode}
+      sharedEntityType="learningScenario"
       avatarPictureUrl={avatarPictureUrl}
       chat={chat}
-      errorState={errorState}
       dialogStartMode="explicit"
       enableFloatingText
       exerciseDescription={sharedSchoolChat.studentExercise}
-      exerciseTitle={t('excercise-title')}
+      exerciseTitle={t('exercise-title')}
+      uploadFileFn={uploadSharedLearningScenarioFile}
+      isSpeechModelEnabled={isSpeechModelEnabled}
+      generateSpeechFn={generateSharedLearningScenarioSpeech}
+      speechOnly={sharedSchoolChat.speechOnly}
+      generateSpeechStreamFn={generateSharedLearningScenarioSpeechStream}
     />
   );
 }

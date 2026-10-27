@@ -10,12 +10,8 @@ import {
   userTable,
 } from '@shared/db/schema';
 import {
-  sharedCharacterChatHasReachedTokenPointsLimit,
-  sharedLearningScenarioChatHasReachedTokenPointsLimit,
-} from '@/app/api/chat/usage';
-import {
   dbGetSharedCharacterChatUsageInCentByCharacterId,
-  dbGetSharedChatUsageInCentBySharedChatId,
+  dbGetLearningScenarioChatUsageInCentByLearningScenarioId,
 } from '@shared/db/functions/token-points';
 import {
   mockCharacter,
@@ -28,6 +24,10 @@ import {
 } from '../../../../utils/mock';
 import { generateRandomString } from '../../../../utils/random';
 import { getUsedBudgetInCentByUser } from '@shared/users/user-budget-service';
+import {
+  sharedCharacterChatHasReachedTokenPointsLimit,
+  sharedLearningScenarioChatHasReachedTokenPointsLimit,
+} from '@shared/users/usage';
 
 test.describe('costs', () => {
   test('should calculate total price from all three usage tracking tables', async () => {
@@ -131,9 +131,10 @@ test.describe('costs', () => {
       await db.insert(sharedLearningScenarioUsageTracking).values(sharedSchoolConversationUsage);
     }
 
-    const sharedChatUsageInCent = await dbGetSharedChatUsageInCentBySharedChatId({
-      sharedChatId: sharedLearningScenario.id,
-      maxUsageTimeLimit: sharedLearningScenario.maxUsageTimeLimit!,
+    const sharedChatUsageInCent = await dbGetLearningScenarioChatUsageInCentByLearningScenarioId({
+      learningScenarioId: sharedLearningScenario.id,
+      userId: user.id,
+      expiredAt: sharedLearningScenario.expiredAt!,
       startedAt: sharedLearningScenario.startedAt!,
     });
 
@@ -197,7 +198,9 @@ test.describe('costs', () => {
       ...mockCharacter(),
       userId: user.id,
       modelId: model.id,
-      accessLevel: 'private' as const,
+      isSchoolShared: false,
+      isCommunityShared: false,
+      isGlobal: false,
       startedAt,
       expiredAt: new Date(startedAt.getTime() + maxUsageTimeLimit * 60 * 1000),
       manuallyStoppedAt: null,
@@ -222,7 +225,8 @@ test.describe('costs', () => {
 
     const sharedChatUsageInCent = await dbGetSharedCharacterChatUsageInCentByCharacterId({
       characterId: character.id,
-      maxUsageTimeLimit: maxUsageTimeLimit,
+      userId: user.id,
+      expiredAt: character.expiredAt,
       startedAt: character.startedAt!,
     });
 

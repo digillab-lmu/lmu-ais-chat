@@ -27,9 +27,11 @@ import {
   ToolDefinition,
 } from '../types';
 import { AnthropicVertex, ClientOptions } from '@anthropic-ai/vertex-sdk';
-import { AiGenerationError, RateLimitExceededError } from '../../errors';
+import { isLlmProvider } from '@ais-chat/api-database/llm-model';
+import { AiGenerationError, ProviderRateLimitExceededError } from '../../errors';
 import { ParsedMessage } from '@anthropic-ai/sdk';
-import { instrumentAnthropicAiClient } from '@sentry/core';
+import { instrumentAnthropicAiClient } from '@sentry/server-utils';
+import { estimateTokenUsage, isAbortError } from '../utils';
 
 /* used by apps/api when called with stream === false or as auxiliary model in chat-bot */
 export function constructGoogleAnthropicTextGenerationFn(model: AiModel): TextGenerationFn {
@@ -40,6 +42,7 @@ export function constructGoogleAnthropicTextGenerationFn(model: AiModel): TextGe
     messages,
     maxTokens,
     model: modelName,
+    abortSignal,
   }: TextGenerationArgs): Promise<TextResponse> {
     // Separate system messages from conversation messages
     const systemMessages = getSystemMessages(messages);
@@ -58,7 +61,7 @@ export function constructGoogleAnthropicTextGenerationFn(model: AiModel): TextGe
       system: buildSystemPrompt(systemMessages),
     };
 
-    const response = await client.messages.create(messageParams);
+    const response = await client.messages.create(messageParams, { signal: abortSignal });
 
     const text = response.content
       .filter((block) => block.type === 'text')
@@ -86,7 +89,7 @@ export function constructGoogleAnthropicTextStreamFn(model: AiModel): TextStream
     onComplete?: (usage: TokenUsage) => void | Promise<void>,
   ): AsyncGenerator<string> {
     try {
-      const { messages, maxTokens, model: modelName } = args;
+      const { messages, maxTokens, model: modelName, abortSignal } = args;
 
       // Separate system messages from conversation messages
       const systemMessages = getSystemMessages(messages);
@@ -105,7 +108,7 @@ export function constructGoogleAnthropicTextStreamFn(model: AiModel): TextStream
         system: buildSystemPrompt(systemMessages),
       };
 
-      const stream = client.messages.stream(messageParams);
+      const stream = client.messages.stream(messageParams, { signal: abortSignal });
 
       let usage: TokenUsage | undefined = undefined;
 
@@ -139,14 +142,19 @@ export function constructGoogleAnthropicAgenticStreamFn(model: AiModel): Agentic
   return async function* generateAgenticStream(
     args: TextGenerationArgs,
   ): AsyncGenerator<StreamEvent> {
+    const { messages, maxTokens, model: modelName, tools, toolChoice, abortSignal } = args;
+    let streamedText = '';
+    // Usage reported while streaming, so an abort still has real numbers to bill.
+    let streamedUsage: TokenUsage | undefined;
+
     try {
-      const { messages, maxTokens, model: modelName, tools, toolChoice } = args;
       const systemMessages = getSystemMessages(messages);
       const conversationMessages = groupToolResults(
         getNonSystemMessages(messages).map((msg) => mapMessageToAnthropicMessageParam(msg)),
       );
       const vertexModelName = resolveModelName(modelName);
       const messageParams: MessageCreateParamsStreaming = {
+        ...model.additionalParameters,
         max_tokens: maxTokens ?? 4096,
         messages: conversationMessages,
         model: vertexModelName,
@@ -156,12 +164,28 @@ export function constructGoogleAnthropicAgenticStreamFn(model: AiModel): Agentic
         tools: mapToolsToAnthropicTools(tools),
       };
 
-      const stream = client.messages.stream(messageParams);
+      const stream = client.messages.stream(messageParams, { signal: abortSignal });
+
+      // Track whether text was streamed as deltas to avoid duplication from finalMessage
+      let hasStreamedTextDeltas = false;
 
       // The streaming response is a sequence of content block deltas and a final message at the end (message_stop).
       for await (const event of stream) {
         if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          hasStreamedTextDeltas = true;
+          streamedText += event.delta.text;
           yield { type: 'text', delta: event.delta.text };
+        } else if (event.type === 'message_start') {
+          streamedUsage = buildTokenUsage(event.message.usage);
+        } else if (event.type === 'message_delta') {
+          // message_delta carries the cumulative output token count for the response so far.
+          const promptTokens = streamedUsage?.promptTokens ?? 0;
+          const completionTokens = event.usage.output_tokens;
+          streamedUsage = {
+            promptTokens,
+            completionTokens,
+            totalTokens: promptTokens + completionTokens,
+          };
         } else if (event.type === 'message_stop') {
           const message: ParsedMessage<null> = await stream.finalMessage();
           const { content, usage, stop_reason } = message;
@@ -179,6 +203,12 @@ export function constructGoogleAnthropicAgenticStreamFn(model: AiModel): Agentic
                   arguments: JSON.stringify(contentBlock.input),
                 } satisfies ToolCall,
               };
+            } else if (contentBlock.type === 'text') {
+              // Only yield text from finalMessage if it wasn't already streamed as deltas
+              // (this can happen for very short responses that skip the streaming phase)
+              if (!hasStreamedTextDeltas && contentBlock.text) {
+                yield { type: 'text', delta: contentBlock.text };
+              }
             }
           }
 
@@ -192,6 +222,15 @@ export function constructGoogleAnthropicAgenticStreamFn(model: AiModel): Agentic
         }
       }
     } catch (error) {
+      if (isAbortError(error, abortSignal)) {
+        // Partial tool calls are unusable, but the prompt was consumed upstream and still costs money.
+        yield {
+          type: 'finish',
+          usage: streamedUsage ?? estimateTokenUsage({ messages, text: streamedText }),
+        };
+        return;
+      }
+
       handleError(error);
     }
   };
@@ -210,7 +249,7 @@ function createAnthropicClient(options: ClientOptions): AnthropicVertex {
  * @returns
  */
 function getConfigurationByModel(model: AiModel): ClientOptions {
-  if (model.setting.provider !== 'google') {
+  if (!isLlmProvider(model.setting, 'google')) {
     throw new Error('Invalid model configuration for Google Anthropic');
   }
 
@@ -300,7 +339,7 @@ function handleError(error: unknown) {
   }
   // Special handling of RateLimitError
   if (error && typeof error === 'object' && 'status' in error && error['status'] === 429) {
-    throw new RateLimitExceededError('Rate limit reached for Google Anthropic API');
+    throw new ProviderRateLimitExceededError('Rate limit reached for Google Anthropic API');
   }
   // Try to get status code from error object to be more specific
   if (error && typeof error === 'object' && 'status' in error) {
@@ -344,6 +383,23 @@ function ensureValidStopReason(reason: StopReason | null) {
     throw new AiGenerationError('Max tokens reached during agentic generation');
   if (reason === 'refusal')
     throw new AiGenerationError('Model refused to generate a response during agentic generation');
+}
+
+/**
+ * Checks if a tool result string represents an error.
+ * Tries to parse it as JSON and checks for an "error" field with a non-null value.
+ */
+function isToolResultError(content: string): boolean {
+  try {
+    if (content.startsWith('Error:')) return true;
+
+    const parsed = JSON.parse(content);
+    // Check if the parsed object has an "error" field with a truthy value
+    return parsed && typeof parsed === 'object' && 'error' in parsed && parsed.error !== null;
+  } catch {
+    // Not valid JSON, not an error response
+    return false;
+  }
 }
 
 /*** Mapping functions ****/
@@ -393,10 +449,17 @@ function mapMessageToAnthropicMessageParam(message: NonSystemMessage): MessagePa
   }
 
   if (message.role === 'tool') {
+    // Ensure tool result content is never empty - Anthropic API requires non-empty content
+    const toolResultContent = message.content.trim() || 'No content returned';
+
+    // Check if this is an error response (either starts with "Error:" or contains error in JSON)
+    const isErrorResult = isToolResultError(toolResultContent);
+
     content.push({
       type: 'tool_result',
       tool_use_id: message.toolCallId ?? '',
-      content: message.content,
+      content: toolResultContent,
+      is_error: isErrorResult,
     } as ToolResultBlockParam);
   }
 

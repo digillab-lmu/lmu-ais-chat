@@ -1,4 +1,5 @@
-import { instrumentOpenAiClient } from '@sentry/core';
+import { instrumentOpenAiClient } from '@sentry/server-utils';
+import { isLlmProvider } from '@ais-chat/api-database/llm-model';
 import OpenAI from 'openai';
 import type {
   AgenticStreamFn,
@@ -8,14 +9,14 @@ import type {
   TokenUsage,
 } from '../types';
 import { AiGenerationError, ProviderConfigurationError } from '../../errors';
-import { toOpenAIMessages, toOpenAIResponsesInput } from '../utils';
+import { toOpenAIResponsesInput } from '../utils';
 import { streamOpenAICompatibleAgenticResponse } from './openai-compatible';
 
 function createAzureClient(model: AiModel): {
   client: OpenAI;
   deployment: string;
 } {
-  if (model.setting.provider !== 'azure') {
+  if (!isLlmProvider(model.setting, 'azure')) {
     throw new ProviderConfigurationError('Invalid model configuration for Azure');
   }
 
@@ -27,59 +28,14 @@ function createAzureClient(model: AiModel): {
     new OpenAI({
       apiKey: model.setting.apiKey,
       baseURL: basePath,
-      defaultQuery: Object.fromEntries(searchParams.entries()),
+      defaultQuery: {
+        ...Object.fromEntries(searchParams.entries()),
+        'api-version': '2025-04-01-preview',
+      },
     }),
   );
 
   return { client, deployment };
-}
-
-export function constructAzureChatCompletionStreamFn(model: AiModel): TextStreamFn {
-  const { client, deployment } = createAzureClient(model);
-
-  return async function* getAzureTextStream({ messages, maxTokens, temperature }, onComplete) {
-    // For Azure, we use the deployment from the URL, not the model name
-    const stream = await client.chat.completions.create(
-      {
-        model: deployment,
-        messages: toOpenAIMessages(messages),
-        stream: true,
-        stream_options: { include_usage: true },
-        max_tokens: maxTokens,
-        temperature,
-      },
-      {
-        path: `/openai/deployments/${deployment}/chat/completions`,
-      },
-    );
-
-    let usage: TokenUsage | undefined;
-
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
-
-      if (content) {
-        yield content;
-      }
-
-      if (chunk.usage) {
-        usage = {
-          completionTokens: chunk.usage.completion_tokens,
-          promptTokens: chunk.usage.prompt_tokens,
-          totalTokens: chunk.usage.total_tokens,
-        };
-      }
-    }
-
-    if (!usage) {
-      throw new AiGenerationError('No usage data returned from Azure OpenAI stream');
-    }
-
-    // Call the callback if provided
-    if (onComplete) {
-      await onComplete(usage);
-    }
-  };
 }
 
 /**
@@ -89,7 +45,7 @@ export function constructAzureChatCompletionStreamFn(model: AiModel): TextStream
 export function constructAzureResponsesStreamFn(model: AiModel): TextStreamFn {
   const { client, deployment } = createAzureClient(model);
 
-  return async function* getAzureTextStream({ messages, maxTokens }, onComplete) {
+  return async function* getAzureTextStream({ messages, maxTokens, abortSignal }, onComplete) {
     const response = await client.responses.create(
       {
         model: deployment,
@@ -100,6 +56,7 @@ export function constructAzureResponsesStreamFn(model: AiModel): TextStreamFn {
       },
       {
         path: `/openai/responses`,
+        ...(abortSignal ? { signal: abortSignal } : {}),
       },
     );
 
@@ -110,7 +67,12 @@ export function constructAzureResponsesStreamFn(model: AiModel): TextStreamFn {
         yield event.delta;
       }
 
-      if (event.type === 'response.completed' && event.response.usage) {
+      if (
+        (event.type === 'response.completed' ||
+          event.type === 'response.incomplete' ||
+          event.type === 'response.failed') &&
+        event.response.usage
+      ) {
         usage = {
           completionTokens: event.response.usage.output_tokens,
           promptTokens: event.response.usage.input_tokens,
@@ -135,18 +97,18 @@ export function constructAzureResponsesAgenticStreamFn(model: AiModel): AgenticS
   return async function* getAzureTextStream({
     messages,
     maxTokens,
-    temperature,
     tools,
     toolChoice,
+    abortSignal,
   }) {
     yield* streamOpenAICompatibleAgenticResponse({
       client,
       messages,
       modelName: deployment,
       maxTokens,
-      temperature,
       tools,
       toolChoice,
+      abortSignal,
       providerName: 'Azure OpenAI',
       createOptions: {
         path: `/openai/responses`,
@@ -156,57 +118,24 @@ export function constructAzureResponsesAgenticStreamFn(model: AiModel): AgenticS
   };
 }
 
-export function constructAzureChatCompletionGenerationFn(model: AiModel): TextGenerationFn {
-  const { client, deployment } = createAzureClient(model);
-
-  return async function getAzureTextGeneration({ messages, maxTokens, temperature }) {
-    // For Azure, we use the deployment from the URL, not the model name
-    const response = await client.chat.completions.create(
-      {
-        model: deployment,
-        messages: toOpenAIMessages(messages),
-        stream: false,
-        max_completion_tokens: maxTokens,
-        temperature,
-      },
-      {
-        path: `/openai/deployments/${deployment}/chat/completions`,
-      },
-    );
-
-    const text = response.choices[0]?.message?.content ?? '';
-    const usage = response.usage;
-
-    if (!usage) {
-      throw new AiGenerationError('No usage data returned from Azure OpenAI');
-    }
-
-    return {
-      text,
-      usage: {
-        completionTokens: usage.completion_tokens,
-        promptTokens: usage.prompt_tokens,
-        totalTokens: usage.total_tokens,
-      },
-    };
-  };
-}
 /**
- * Alternative non-streaming function using the OpenAI Responses API
+ * Non-streaming function using the OpenAI Responses API.
  */
 export function constructAzureResponsesGenerationFn(model: AiModel): TextGenerationFn {
   const { client, deployment } = createAzureClient(model);
 
-  return async function getAzureTextGeneration({ messages, maxTokens }) {
+  return async function getAzureTextGeneration({ messages, maxTokens, abortSignal }) {
     const response = await client.responses.create(
       {
         model: deployment,
         input: toOpenAIResponsesInput(messages),
         stream: false,
         max_output_tokens: maxTokens,
+        ...model.additionalParameters,
       },
       {
         path: `/openai/responses`,
+        ...(abortSignal ? { signal: abortSignal } : {}),
       },
     );
 

@@ -1,16 +1,20 @@
+import { UserModel } from '@shared/auth/user-model';
+import { NotFoundError } from '@shared/error';
+import { findStaticModelByRole } from '@shared/llm-models/llm-model-service';
+import { SHARE_EXTENSION_WINDOW_MS } from '@shared/sharing/const';
 import {
   and,
   arrayOverlaps,
   desc,
   eq,
   getTableColumns,
+  gte,
   inArray,
   isNull,
   or,
   sql,
 } from 'drizzle-orm';
 import { db } from '..';
-import { NotFoundError } from '@shared/error';
 import {
   CharacterFileMapping,
   CharacterInsertModel,
@@ -20,15 +24,22 @@ import {
   characterTemplateMappingTable,
   CharacterWithShareDataModel,
   conversationTable,
-  fileTable,
+  FilterGroup,
   SharedCharacterChatUsageTrackingInsertModel,
   sharedCharacterChatUsageTrackingTable,
   sharedCharacterConversation,
   userTable,
 } from '../schema';
-import { dbGetModelByName } from './llm-model';
-import { DEFAULT_CHAT_MODEL } from '@shared/llm-models/default-llm-models';
-import { UserModel } from '@shared/auth/user-model';
+import { PgTransactionObject } from '../types';
+import { dbDeleteFileIfUnreferenced } from './files';
+
+type IncludeDeletedOption = {
+  includeDeleted?: boolean;
+};
+
+function excludeDeletedCharacters(options?: IncludeDeletedOption) {
+  return options?.includeDeleted ? undefined : eq(characterTable.isDeleted, false);
+}
 
 /**
  * Returns a subquery that selects only the single latest non-expired share per character for a given user.
@@ -75,6 +86,29 @@ function latestCharacterShare(
     .as('latest_share');
 }
 
+/**
+ * Returns a subquery that selects the single most-recent non-manually-stopped share per character
+ * for a given user. This includes shares that have already expired, so the caller has
+ * to decide if it is still available (grace window) or already expired.
+ */
+function latestNonStoppedCharacterShare(
+  user: Pick<UserModel, 'id'>,
+): ReturnType<typeof latestActiveCharacterShare> {
+  return db
+    .selectDistinctOn([sharedCharacterConversation.characterId], {
+      ...getTableColumns(sharedCharacterConversation),
+    })
+    .from(sharedCharacterConversation)
+    .where(
+      and(
+        eq(sharedCharacterConversation.userId, user.id),
+        isNull(sharedCharacterConversation.manuallyStoppedAt),
+      ),
+    )
+    .orderBy(sharedCharacterConversation.characterId, desc(sharedCharacterConversation.startedAt))
+    .as('latest_share');
+}
+
 function baseCharacterQuery() {
   return db
     .select({
@@ -111,13 +145,14 @@ function baseCharacterWithShareQuery(activeShare: ReturnType<typeof latestActive
  */
 export async function dbGetCharacters({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id' | 'schoolIds'>;
-}): Promise<CharacterSelectModel[]> {
+} & IncludeDeletedOption): Promise<CharacterSelectModel[]> {
   const schoolCondition =
     user.schoolIds.length > 0
       ? and(
-          eq(characterTable.accessLevel, 'school'),
+          eq(characterTable.isSchoolShared, true),
           arrayOverlaps(userTable.schoolIds, user.schoolIds),
         )
       : undefined;
@@ -127,10 +162,10 @@ export async function dbGetCharacters({
       or(
         eq(characterTable.userId, user.id),
         schoolCondition,
-        eq(characterTable.accessLevel, 'community'),
-        eq(characterTable.accessLevel, 'global'),
+        eq(characterTable.isCommunityShared, true),
+        eq(characterTable.isGlobal, true),
       ),
-      eq(characterTable.isDeleted, false),
+      excludeDeletedCharacters({ includeDeleted }),
     ),
   );
 
@@ -140,53 +175,92 @@ export async function dbGetCharacters({
 /**
  * Needs userId because the metadata for shared characters is both tied to the user and character,
  * this is especially important for shared characters (school wide or global).
+ *
+ * Returns the latest share data even if expired, as long as it hasn't been manually stopped.
+ * The service layer (getSharedCharacter) is responsible for validating the grace window.
+ *
+ * Returns undefined if the character does not exist or has no non-manually-stopped shares
  */
 export async function dbGetCharacterByIdWithShareData({
   characterId,
   user,
+  includeDeleted,
 }: {
   characterId: string;
   user: Pick<UserModel, 'id'>;
-}): Promise<CharacterWithShareDataModel | undefined> {
-  const activeShare = latestActiveCharacterShare(user);
-  const [row] = await baseCharacterWithShareQuery(activeShare)
-    .innerJoin(activeShare, eq(activeShare.characterId, characterTable.id))
-    .where(eq(characterTable.id, characterId));
+} & IncludeDeletedOption): Promise<CharacterWithShareDataModel | undefined> {
+  const latestShare = latestNonStoppedCharacterShare(user);
+  const [row] = await baseCharacterWithShareQuery(latestShare)
+    .innerJoin(latestShare, eq(latestShare.characterId, characterTable.id))
+    .where(and(eq(characterTable.id, characterId), excludeDeletedCharacters({ includeDeleted })));
   return row;
 }
 
 export async function dbGetCharacterByIdOptionalShareData({
   characterId,
   user,
+  includeDeleted,
 }: {
   characterId: string;
   user: Pick<UserModel, 'id'>;
-}): Promise<CharacterOptionalShareDataModel | undefined> {
+} & IncludeDeletedOption): Promise<CharacterOptionalShareDataModel | undefined> {
   const latestShare = latestCharacterShare(user);
   const [row] = await baseCharacterWithShareQuery(latestShare)
     .leftJoin(latestShare, eq(latestShare.characterId, characterTable.id))
-    .where(eq(characterTable.id, characterId));
+    .where(and(eq(characterTable.id, characterId), excludeDeletedCharacters({ includeDeleted })));
   return row;
 }
 
 /**
  * The returned entity has no Shared Data Attached! These are found in the SharedCharacterConversation Table
  */
-export async function dbGetCharacterById({ characterId }: { characterId: string }) {
-  const [row] = await baseCharacterQuery().where(eq(characterTable.id, characterId));
+export async function dbGetCharacterById({
+  characterId,
+  includeDeleted,
+}: {
+  characterId: string;
+} & IncludeDeletedOption) {
+  const [row] = await baseCharacterQuery().where(
+    and(eq(characterTable.id, characterId), excludeDeletedCharacters({ includeDeleted })),
+  );
+  return row;
+}
+
+export async function dbGetCharacterByIdForConversation({
+  characterId,
+  conversationId,
+  userId,
+}: {
+  characterId: string;
+  conversationId: string;
+  userId: string;
+}): Promise<CharacterSelectModel | undefined> {
+  const [row] = await baseCharacterQuery()
+    .innerJoin(conversationTable, eq(conversationTable.characterId, characterTable.id))
+    .where(
+      and(
+        eq(characterTable.id, characterId),
+        eq(conversationTable.id, conversationId),
+        eq(conversationTable.userId, userId),
+        isNull(conversationTable.deletedAt),
+      ),
+    );
   return row;
 }
 
 export async function dbGetCharactersByIds({
   characterIds,
+  includeDeleted,
 }: {
   characterIds: string[];
-}): Promise<CharacterSelectModel[]> {
+} & IncludeDeletedOption): Promise<CharacterSelectModel[]> {
   if (characterIds.length === 0) {
     return [];
   }
 
-  return baseCharacterQuery().where(inArray(characterTable.id, characterIds));
+  return baseCharacterQuery().where(
+    and(inArray(characterTable.id, characterIds), excludeDeletedCharacters({ includeDeleted })),
+  );
 }
 
 export async function dbGetCopyTemplateCharacter({
@@ -205,7 +279,9 @@ export async function dbGetCopyTemplateCharacter({
   return {
     ...character,
     id: characterId,
-    accessLevel: 'private',
+    isSchoolShared: false,
+    isCommunityShared: false,
+    isGlobal: false,
     userId: user.id,
   };
 }
@@ -215,7 +291,7 @@ export async function dbCreateCharacter(
 ) {
   let modelId = character.modelId;
   if (!modelId) {
-    modelId = (await dbGetModelByName(DEFAULT_CHAT_MODEL))?.id;
+    modelId = (await findStaticModelByRole('default-chat'))?.id;
     if (!modelId) {
       throw new Error('No default model found');
     }
@@ -231,9 +307,10 @@ export async function dbCreateCharacter(
 
 export async function dbGetGlobalCharacters({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id' | 'federalStateId'>;
-}): Promise<CharacterOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<CharacterOptionalShareDataModel[]> {
   const federalStateId = user.federalStateId;
 
   const activeShare = latestActiveCharacterShare(user);
@@ -245,10 +322,11 @@ export async function dbGetGlobalCharacters({
     )
     .where(
       and(
-        eq(characterTable.accessLevel, 'global'),
+        eq(characterTable.isGlobal, true),
         federalStateId
           ? eq(characterTemplateMappingTable.federalStateId, federalStateId)
           : undefined,
+        excludeDeletedCharacters({ includeDeleted }),
       ),
     )
     .orderBy(desc(characterTable.createdAt));
@@ -258,13 +336,16 @@ export async function dbGetGlobalCharacters({
 
 export async function dbGetCommunityCharacters({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id'>;
-}): Promise<CharacterOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<CharacterOptionalShareDataModel[]> {
   const activeShare = latestActiveCharacterShare(user);
   const characters = await baseCharacterWithShareQuery(activeShare)
     .leftJoin(activeShare, eq(activeShare.characterId, characterTable.id))
-    .where(eq(characterTable.accessLevel, 'community'))
+    .where(
+      and(eq(characterTable.isCommunityShared, true), excludeDeletedCharacters({ includeDeleted })),
+    )
     .orderBy(desc(characterTable.createdAt));
 
   return characters;
@@ -282,9 +363,10 @@ export async function dbGetCommunityCharacters({
  */
 export async function dbGetCharactersByAssociatedSchools({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id' | 'schoolIds'>;
-}): Promise<CharacterOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<CharacterOptionalShareDataModel[]> {
   if (user.schoolIds.length === 0) {
     return [];
   }
@@ -295,7 +377,8 @@ export async function dbGetCharactersByAssociatedSchools({
     .where(
       and(
         arrayOverlaps(userTable.schoolIds, user.schoolIds),
-        eq(characterTable.accessLevel, 'school'),
+        eq(characterTable.isSchoolShared, true),
+        excludeDeletedCharacters({ includeDeleted }),
       ),
     )
     .orderBy(desc(characterTable.createdAt));
@@ -305,13 +388,22 @@ export async function dbGetCharactersByAssociatedSchools({
 
 export async function dbGetCharactersByUser({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id'>;
-}): Promise<CharacterOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<CharacterOptionalShareDataModel[]> {
   const activeShare = latestActiveCharacterShare(user);
   const characters = await baseCharacterWithShareQuery(activeShare)
     .leftJoin(activeShare, eq(activeShare.characterId, characterTable.id))
-    .where(and(eq(characterTable.userId, user.id), eq(characterTable.accessLevel, 'private')))
+    .where(
+      and(
+        eq(characterTable.userId, user.id),
+        eq(characterTable.isSchoolShared, false),
+        eq(characterTable.isCommunityShared, false),
+        eq(characterTable.isGlobal, false),
+        excludeDeletedCharacters({ includeDeleted }),
+      ),
+    )
     .orderBy(desc(characterTable.createdAt));
 
   return characters;
@@ -319,13 +411,14 @@ export async function dbGetCharactersByUser({
 
 export async function dbGetAllCharactersByUser({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id'>;
-}): Promise<CharacterOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<CharacterOptionalShareDataModel[]> {
   const activeShare = latestActiveCharacterShare(user);
   const characters = await baseCharacterWithShareQuery(activeShare)
     .leftJoin(activeShare, eq(activeShare.characterId, characterTable.id))
-    .where(eq(characterTable.userId, user.id))
+    .where(and(eq(characterTable.userId, user.id), excludeDeletedCharacters({ includeDeleted })))
     .orderBy(desc(characterTable.createdAt));
 
   return characters;
@@ -333,9 +426,10 @@ export async function dbGetAllCharactersByUser({
 
 export async function dbGetAllAccessibleCharacters({
   user,
+  includeDeleted,
 }: {
   user: Pick<UserModel, 'id' | 'schoolIds' | 'federalStateId'>;
-}): Promise<CharacterOptionalShareDataModel[]> {
+} & IncludeDeletedOption): Promise<CharacterOptionalShareDataModel[]> {
   const federalStateId = user.federalStateId;
   const activeShare = latestActiveCharacterShare(user);
   return baseCharacterWithShareQuery(activeShare)
@@ -345,19 +439,27 @@ export async function dbGetAllAccessibleCharacters({
       eq(characterTemplateMappingTable.characterId, characterTable.id),
     )
     .where(
-      or(
-        and(eq(characterTable.userId, user.id), eq(characterTable.accessLevel, 'private')),
-        user.schoolIds && user.schoolIds.length > 0
-          ? and(
-              eq(characterTable.accessLevel, 'school'),
-              arrayOverlaps(userTable.schoolIds, user.schoolIds),
-            )
-          : undefined,
-        eq(characterTable.accessLevel, 'community'),
-        and(
-          eq(characterTable.accessLevel, 'global'),
-          eq(characterTemplateMappingTable.federalStateId, federalStateId),
+      and(
+        or(
+          and(
+            eq(characterTable.userId, user.id),
+            eq(characterTable.isSchoolShared, false),
+            eq(characterTable.isCommunityShared, false),
+            eq(characterTable.isGlobal, false),
+          ),
+          user.schoolIds && user.schoolIds.length > 0
+            ? and(
+                eq(characterTable.isSchoolShared, true),
+                arrayOverlaps(userTable.schoolIds, user.schoolIds),
+              )
+            : undefined,
+          eq(characterTable.isCommunityShared, true),
+          and(
+            eq(characterTable.isGlobal, true),
+            eq(characterTemplateMappingTable.federalStateId, federalStateId),
+          ),
         ),
+        excludeDeletedCharacters({ includeDeleted }),
       ),
     )
     .orderBy(desc(characterTable.createdAt));
@@ -366,14 +468,15 @@ export async function dbGetAllAccessibleCharacters({
 export async function dbGetCharacterByIdAndUser({
   characterId,
   user,
+  includeDeleted,
 }: {
   characterId: string;
   user: Pick<UserModel, 'id'>;
-}): Promise<CharacterWithShareDataModel | undefined> {
+} & IncludeDeletedOption): Promise<CharacterWithShareDataModel | undefined> {
   const activeShare = latestActiveCharacterShare(user);
   const [row] = await baseCharacterWithShareQuery(activeShare)
     .innerJoin(activeShare, eq(activeShare.characterId, characterTable.id))
-    .where(eq(characterTable.id, characterId));
+    .where(and(eq(characterTable.id, characterId), excludeDeletedCharacters({ includeDeleted })));
   return row;
 }
 
@@ -400,12 +503,12 @@ export async function dbDeleteCharacterByIdAndUser({
       .where(eq(CharacterFileMapping.characterId, character.id));
     await tx.delete(conversationTable).where(eq(conversationTable.characterId, character.id));
     await tx.delete(CharacterFileMapping).where(eq(CharacterFileMapping.characterId, character.id));
-    await tx.delete(fileTable).where(
-      inArray(
-        fileTable.id,
-        relatedFiles.map((f) => f.id),
-      ),
-    );
+    const deletedFileIds: string[] = [];
+    for (const { id } of relatedFiles) {
+      if (await dbDeleteFileIfUnreferenced(tx, id)) {
+        deletedFileIds.push(id);
+      }
+    }
     const deletedCharacter = (
       await tx
         .delete(characterTable)
@@ -416,7 +519,7 @@ export async function dbDeleteCharacterByIdAndUser({
     if (deletedCharacter === undefined) {
       throw new Error('Could not delete character');
     }
-    return deletedCharacter;
+    return { deletedCharacter, deletedFileIds };
   });
 
   return deletedCharacter;
@@ -425,10 +528,11 @@ export async function dbDeleteCharacterByIdAndUser({
 export async function dbGetCharacterByIdAndInviteCode({
   id,
   inviteCode,
+  includeDeleted,
 }: {
   id: string;
   inviteCode: string;
-}): Promise<CharacterWithShareDataModel | undefined> {
+} & IncludeDeletedOption): Promise<CharacterWithShareDataModel | undefined> {
   const [row] = await db
     .select({
       ...getTableColumns(characterTable),
@@ -447,7 +551,13 @@ export async function dbGetCharacterByIdAndInviteCode({
       sharedCharacterConversation,
       eq(sharedCharacterConversation.characterId, characterTable.id),
     )
-    .where(and(eq(characterTable.id, id), eq(sharedCharacterConversation.inviteCode, inviteCode)));
+    .where(
+      and(
+        eq(characterTable.id, id),
+        eq(sharedCharacterConversation.inviteCode, inviteCode),
+        excludeDeletedCharacters({ includeDeleted }),
+      ),
+    );
 
   return row;
 }
@@ -468,23 +578,33 @@ export async function dbUpdateTokenUsageByCharacterChatId(
 export async function dbGetCharacterByNameAndUser({
   name,
   user,
+  includeDeleted,
 }: {
   name: string;
   user: Pick<UserModel, 'id'>;
-}): Promise<CharacterSelectModel | undefined> {
+} & IncludeDeletedOption): Promise<CharacterSelectModel | undefined> {
   const [character] = await baseCharacterQuery().where(
-    and(eq(characterTable.name, name), eq(characterTable.userId, user.id)),
+    and(
+      eq(characterTable.name, name),
+      eq(characterTable.userId, user.id),
+      excludeDeletedCharacters({ includeDeleted }),
+    ),
   );
   return character;
 }
 
 export async function dbGetGlobalCharacterByName({
   name,
+  includeDeleted,
 }: {
   name: string;
-}): Promise<CharacterSelectModel | undefined> {
+} & IncludeDeletedOption): Promise<CharacterSelectModel | undefined> {
   const [character] = await baseCharacterQuery().where(
-    and(eq(characterTable.name, name), eq(characterTable.accessLevel, 'global')),
+    and(
+      eq(characterTable.name, name),
+      eq(characterTable.isGlobal, true),
+      excludeDeletedCharacters({ includeDeleted }),
+    ),
   );
   return character;
 }
@@ -494,7 +614,9 @@ export async function dbSetCharacterSuspended({ characterId }: { characterId: st
     .update(characterTable)
     .set({
       suspended: true,
-      accessLevel: 'private',
+      isSchoolShared: false,
+      isCommunityShared: false,
+      isGlobal: false,
       hasLinkAccess: false,
     })
     .where(eq(characterTable.id, characterId))
@@ -504,7 +626,10 @@ export async function dbSetCharacterSuspended({ characterId }: { characterId: st
     throw new NotFoundError('Character not found');
   }
 
-  const character = await dbGetCharacterById({ characterId: updatedCharacter.id });
+  const character = await dbGetCharacterById({
+    characterId: updatedCharacter.id,
+    includeDeleted: true,
+  });
   if (!character) {
     throw new NotFoundError('Character not found');
   }
@@ -523,7 +648,10 @@ export async function dbLiftSuspensionOnCharacter({ characterId }: { characterId
     throw new NotFoundError('Character not found');
   }
 
-  const character = await dbGetCharacterById({ characterId: updatedCharacter.id });
+  const character = await dbGetCharacterById({
+    characterId: updatedCharacter.id,
+    includeDeleted: true,
+  });
   if (!character) {
     throw new NotFoundError('Character not found');
   }
@@ -532,15 +660,213 @@ export async function dbLiftSuspensionOnCharacter({ characterId }: { characterId
 }
 
 /**
- * Returns all active (non-stopped, non-expired) shared character conversations for a given character and user.
+ * Returns the latest manageable share for a character owned/started by the given user,
+ * or `null` when none exists.
+ *
+ * A share is "manageable" when it has not been manually stopped and its expiration is
+ * still within the grace window (`SHARE_EXTENSION_WINDOW_MS`) — i.e. it is either still
+ * running or expired recently enough that it can still be extended or adjusted.
  */
-export async function dbGetSharedCharacterConversations({
+export async function dbGetLatestManageableCharacterShare({
   characterId,
   user,
 }: {
   characterId: string;
   user: Pick<UserModel, 'id'>;
 }) {
-  const activeShare = latestActiveCharacterShare(user);
-  return db.select().from(activeShare).where(eq(activeShare.characterId, characterId));
+  const graceWindowStart = new Date(Date.now() - SHARE_EXTENSION_WINDOW_MS);
+
+  const [share] = await db
+    .select()
+    .from(sharedCharacterConversation)
+    .where(
+      and(
+        eq(sharedCharacterConversation.characterId, characterId),
+        eq(sharedCharacterConversation.userId, user.id),
+        isNull(sharedCharacterConversation.manuallyStoppedAt),
+        gte(sharedCharacterConversation.expiredAt, graceWindowStart),
+      ),
+    )
+    .orderBy(desc(sharedCharacterConversation.startedAt))
+    .limit(1);
+
+  return share ?? null;
+}
+
+/**
+ * Creates a new share for a character.
+ * Always inserts a new row; the caller is responsible for ensuring no
+ * manageable share already exists.
+ */
+export async function dbCreateCharacterShare({
+  user,
+  characterId,
+  tokenPointsLimit,
+  maxUsageTimeLimit,
+  inviteCode,
+  startedAt,
+}: {
+  user: Pick<UserModel, 'id'>;
+  characterId: string;
+  tokenPointsLimit: number;
+  maxUsageTimeLimit: number;
+  inviteCode: string;
+  startedAt: Date;
+}) {
+  const expiredAt = new Date(startedAt.getTime() + maxUsageTimeLimit * 60 * 1000);
+  const [newShare] = await db
+    .insert(sharedCharacterConversation)
+    .values({
+      userId: user.id,
+      characterId,
+      tokenPointsLimit,
+      maxUsageTimeLimit,
+      inviteCode,
+      startedAt,
+      expiredAt,
+    })
+    .returning();
+
+  return newShare;
+}
+
+/**
+ * Marks a character share as manually stopped.
+ * Returns `null` if the share does not exist.
+ */
+export async function dbStopCharacterShare({ shareId }: { shareId: string }) {
+  const [updatedShare] = await db
+    .update(sharedCharacterConversation)
+    .set({ manuallyStoppedAt: new Date() })
+    .where(eq(sharedCharacterConversation.id, shareId))
+    .returning();
+
+  return updatedShare ?? null;
+}
+
+/**
+ * Extends the expiration timestamp of an already loaded manageable character share.
+ * Respects the grace window, so a share that expired recently can still be extended.
+ */
+export async function dbExtendSharedCharacterConversationExpiration({
+  share,
+  additionalTimeInMinutes,
+}: {
+  share: { id: string; expiredAt: Date };
+  additionalTimeInMinutes: number;
+}) {
+  const now = new Date();
+  const baseDate = share.expiredAt > now ? share.expiredAt : now;
+  const newExpiredAt = new Date(baseDate.getTime() + additionalTimeInMinutes * 60 * 1000);
+
+  const [updatedShare] = await db
+    .update(sharedCharacterConversation)
+    .set({ expiredAt: newExpiredAt })
+    .where(eq(sharedCharacterConversation.id, share.id))
+    .returning();
+
+  return updatedShare ?? null;
+}
+
+/**
+ * Updates the token points limit of the latest manageable character share for the given user.
+ * Respects the grace window, so a share that expired recently can still be adjusted.
+ * Returns `null` if no manageable share exists.
+ */
+export async function dbUpdateCharacterShareTokenPointsLimit({
+  characterId,
+  user,
+  tokenPointsLimit,
+}: {
+  characterId: string;
+  user: Pick<UserModel, 'id'>;
+  tokenPointsLimit: number;
+}) {
+  const latestManageableShare = await dbGetLatestManageableCharacterShare({ characterId, user });
+
+  if (!latestManageableShare) {
+    return null;
+  }
+
+  const [updatedShare] = await db
+    .update(sharedCharacterConversation)
+    .set({ tokenPointsLimit })
+    .where(eq(sharedCharacterConversation.id, latestManageableShare.id))
+    .returning();
+
+  return updatedShare;
+}
+
+export async function dbUpdateCharacterFilterGroup({
+  characterId,
+  filterGroup: updatedFilterGroup,
+}: {
+  characterId: string;
+  filterGroup: FilterGroup;
+}): Promise<void> {
+  await db
+    .update(characterTable)
+    .set({ filterGroup: updatedFilterGroup })
+    .where(eq(characterTable.id, characterId));
+}
+
+/**
+ * Updates whether a character is community-shared, within the given transaction.
+ * Only called from the community-template-request workflow (approve/cancel), never directly
+ * from the owner-facing update path. The `updatedAt` timestamp is bumped automatically.
+ */
+export async function dbUpdateCharacterCommunityShared(
+  characterId: string,
+  isCommunityShared: boolean,
+  tx: PgTransactionObject,
+): Promise<void> {
+  const [updatedCharacter] = await tx
+    .update(characterTable)
+    .set({ isCommunityShared })
+    .where(eq(characterTable.id, characterId))
+    .returning({ id: characterTable.id });
+
+  if (!updatedCharacter) {
+    throw new NotFoundError('Character not found');
+  }
+}
+
+/**
+ * Forces hasLinkAccess on for a character within the given transaction (admin needs link
+ * access to review a submitted community template request).
+ */
+export async function dbUpdateCharacterHasLinkAccess(
+  characterId: string,
+  hasLinkAccess: boolean,
+  tx: PgTransactionObject,
+): Promise<void> {
+  const [updatedCharacter] = await tx
+    .update(characterTable)
+    .set({ hasLinkAccess })
+    .where(eq(characterTable.id, characterId))
+    .returning({ id: characterTable.id });
+
+  if (!updatedCharacter) {
+    throw new NotFoundError('Character not found');
+  }
+}
+
+/**
+ * Forces isSchoolShared on for a character within the given transaction (community sharing
+ * includes school sharing).
+ */
+export async function dbUpdateCharacterSchoolShared(
+  characterId: string,
+  isSchoolShared: boolean,
+  tx: PgTransactionObject,
+): Promise<void> {
+  const [updatedCharacter] = await tx
+    .update(characterTable)
+    .set({ isSchoolShared })
+    .where(eq(characterTable.id, characterId))
+    .returning({ id: characterTable.id });
+
+  if (!updatedCharacter) {
+    throw new NotFoundError('Character not found');
+  }
 }

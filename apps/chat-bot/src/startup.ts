@@ -1,11 +1,14 @@
-import { runDatabaseMigration } from '@shared/db';
-import { dbGetFederalStates, dbUpdateFederalState } from '@shared/db/functions/federal-state';
-import { decrypt } from '@shared/db/crypto';
-import { env } from '@shared/env';
-import { env as aiEnv } from '@ais-chat/ai-core/env';
 import { lookupApiKeys } from '@ais-chat/ai-core/api-keys/lookup';
+import { env as aiEnv } from '@ais-chat/ai-core/env';
+import { runDatabaseMigration, shutdownDatabase } from '@shared/db';
+import { decrypt } from '@shared/db/crypto';
+import { dbGetFederalStates, dbUpdateFederalState } from '@shared/db/functions/federal-state';
+import { env } from '@shared/env';
 import { logError, logInfo } from '@shared/logging';
+import { shutdownRabbitMQ } from '@shared/rabbitmq';
 import { listFilesFromS3 } from '@shared/s3';
+import { registerCleanupHandler } from '@shared/shutdown/cleanup';
+import { fixInvalidPictureIds } from '@shared/templates/fix-invalid-picture-ids';
 
 /**
  * Custom code that will be executed on application startup.
@@ -13,6 +16,9 @@ import { listFilesFromS3 } from '@shared/s3';
 export async function startup() {
   await runDatabaseMigration();
   await postMigration();
+
+  registerCleanupHandler(shutdownDatabase);
+  registerCleanupHandler(shutdownRabbitMQ);
 }
 
 /**
@@ -21,6 +27,10 @@ export async function startup() {
 async function postMigration() {
   await tempAddApiKeyIdsToFederalStates();
   await tempAddPictureUrlsToFederalStates();
+  // run fix in the background
+  void tempFixInvalidPictureIds().catch((error) =>
+    logError('Failed to run picture id migration', error),
+  );
 }
 
 /**
@@ -117,4 +127,15 @@ async function tempAddPictureUrlsToFederalStates() {
   }
 
   logInfo(`Completed picture URL updates for ${statesToUpdate.length} federal states`);
+}
+
+/**
+ * Temporary migration that fixes assistants/characters whose picture id still references
+ * another entity's S3 object instead of their own (a leftover of missing avatar duplication
+ * on template/duplicate creation).
+ *
+ * TODO: delete after executing in production once
+ */
+async function tempFixInvalidPictureIds() {
+  await fixInvalidPictureIds();
 }

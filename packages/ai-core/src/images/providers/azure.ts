@@ -1,6 +1,7 @@
-import { instrumentOpenAiClient } from '@sentry/core';
+import { instrumentOpenAiClient } from '@sentry/server-utils';
 import * as Sentry from '@sentry/core';
-import OpenAI from 'openai';
+import { isLlmProvider } from '@ais-chat/api-database/llm-model';
+import OpenAI, { toFile } from 'openai';
 import type { AiModel, ImageGenerationFn } from '../types';
 import { AiGenerationError, ProviderConfigurationError, ResponsibleAIError } from '../../errors';
 
@@ -20,6 +21,10 @@ function setUsageAttributes(span: Sentry.Span, usage: OpenAI.Images.ImagesRespon
   span.setAttribute('gen_ai.usage.input_tokens', usage.input_tokens);
   span.setAttribute('gen_ai.usage.output_tokens', usage.output_tokens);
   span.setAttribute('gen_ai.usage.total_tokens', usage.total_tokens);
+
+  if (usage.input_tokens_details) {
+    span.setAttribute('gen_ai.usage.input_image_tokens', usage.input_tokens_details.image_tokens);
+  }
 
   if (usage.output_tokens_details) {
     span.setAttribute('gen_ai.usage.output_text_tokens', usage.output_tokens_details.text_tokens);
@@ -51,7 +56,7 @@ function createAzureClient(model: AiModel): {
   client: OpenAI;
   deployment: string;
 } {
-  if (model.setting.provider !== 'azure') {
+  if (!isLlmProvider(model.setting, 'azure')) {
     throw new ProviderConfigurationError('Invalid model configuration for Azure');
   }
 
@@ -63,7 +68,10 @@ function createAzureClient(model: AiModel): {
     new OpenAI({
       apiKey: model.setting.apiKey,
       baseURL: basePath,
-      defaultQuery: Object.fromEntries(searchParams.entries()),
+      defaultQuery: {
+        ...Object.fromEntries(searchParams.entries()),
+        'api-version': '2025-04-01-preview',
+      },
     }),
   );
 
@@ -75,6 +83,7 @@ export function constructAzureImageGenerationFn(model: AiModel): ImageGeneration
 
   return async function getAzureImageGeneration(params: Parameters<ImageGenerationFn>[0]) {
     const { prompt } = params;
+    const inputImages = params.options?.inputImages ?? [];
     return Sentry.startSpan(
       {
         name: `generate_image ${model.name}`,
@@ -88,17 +97,36 @@ export function constructAzureImageGenerationFn(model: AiModel): ImageGeneration
       },
       async (span) => {
         try {
-          const result = await client.images.generate(
-            {
-              prompt,
-              size: '1024x1024',
-              n: 1,
-              quality: 'medium',
-            },
-            {
-              path: `/openai/deployments/${deployment}/images/generations`,
-            },
-          );
+          const size = params.options?.size ?? '1024x1024';
+          const result =
+            inputImages.length > 0
+              ? await client.images.edit(
+                  {
+                    prompt,
+                    size,
+                    n: 1,
+                    quality: 'medium',
+                    image: await Promise.all(
+                      inputImages.map((image) =>
+                        toFile(image.data, image.filename, { type: image.mimeType }),
+                      ),
+                    ),
+                  },
+                  {
+                    path: `/openai/deployments/${deployment}/images/edits`,
+                  },
+                )
+              : await client.images.generate(
+                  {
+                    prompt,
+                    size,
+                    n: 1,
+                    quality: 'medium',
+                  },
+                  {
+                    path: `/openai/deployments/${deployment}/images/generations`,
+                  },
+                );
 
           if (!result.data || result.data.length === 0) {
             throw new AiGenerationError('No image data received from Azure OpenAI');
@@ -119,6 +147,7 @@ export function constructAzureImageGenerationFn(model: AiModel): ImageGeneration
             output_format: result.output_format,
             usage: {
               input_text_tokens: result.usage.input_tokens_details.text_tokens,
+              input_image_tokens: result.usage.input_tokens_details.image_tokens ?? 0,
               output_text_tokens: result.usage.output_tokens_details?.text_tokens,
               output_image_tokens: result.usage.output_tokens_details?.image_tokens ?? 0,
             },

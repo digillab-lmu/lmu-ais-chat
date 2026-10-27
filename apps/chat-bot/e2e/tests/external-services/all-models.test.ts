@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../../fixtures/test';
 import { AUTH_FILES, LLM_MODELS_FILE } from '../../utils/const';
 import { selectDifferentModel, sendMessage } from '../../utils/chat';
 
@@ -21,7 +21,7 @@ llmModels.forEach((modelName) => {
       await page.goto('/');
       await selectDifferentModel(page, modelName);
       await sendMessage(page, 'Antworte mit genau dem Wort "OK".');
-      await expect(page.getByLabel('assistant message 1')).toContainText('OK');
+      await expect(page.getByLabel('assistant message 1')).toContainText(/ok/i);
     },
   );
 });

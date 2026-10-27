@@ -4,14 +4,11 @@ import type {
   AssistantSelectModel,
   CharacterSelectModel,
   LearningScenarioSelectModel,
-  WebSearchResult,
 } from '@shared/db/schema';
-import { RetrievedChunk } from '../rag/types';
 import { HELP_MODE_ASSISTANT_ID } from '@shared/db/const';
 import { constructCharacterSystemPrompt } from '../character/system-prompt';
 import { constructLearningScenarioSystemPrompt } from '../learning-scenario/system-prompt';
 import {
-  constructRagContext,
   constructToolGuidelines,
   FORMAT_GUIDELINES,
   LANGUAGE_GUIDELINES,
@@ -19,14 +16,7 @@ import {
 } from '../utils/system-prompt';
 import type { ToolDefinition } from '@ais-chat/ai-core';
 
-function constructAisChatSystemPrompt(
-  chunks: RetrievedChunk[],
-  errorUrls: string[],
-  webSearchResults: WebSearchResult[],
-  activeToolDefinitions: ToolDefinition[],
-) {
-  const ragContext = constructRagContext(chunks, errorUrls, webSearchResults);
-
+function constructAisChatSystemPrompt(activeToolDefinitions: ToolDefinition[]) {
   return `Du bist AIS.chat, der datenschutzkonforme KI-Chatbot für den Schulunterricht. 
 Du unterstützt Lehrkräfte bei der Unterrichtsgestaltung und Schülerinnen und Schüler beim Lernen. 
 Du wirst vom FWU, dem Medieninstitut der Länder, entwickelt und betrieben. 
@@ -34,19 +24,13 @@ Heute ist der ${formatDateToGermanTimestamp(new Date())}.
 ${LANGUAGE_GUIDELINES}
 ${constructToolGuidelines(activeToolDefinitions)}
 ${FORMAT_GUIDELINES}
-${SUGGESTION_GUIDELINES}
-${ragContext}`;
+${SUGGESTION_GUIDELINES}`;
 }
 
 function constructAssistantSystemPrompt(
   assistant: AssistantSelectModel,
-  chunks: RetrievedChunk[],
-  errorUrls: string[],
-  webSearchResults: WebSearchResult[] = [],
   activeToolDefinitions: ToolDefinition[] = [],
 ) {
-  const ragContext = constructRagContext(chunks, errorUrls, webSearchResults);
-
   return `Du bist ein hilfreicher Assistent, der in einer Schule eingesetzt wird, um eine Lehrkraft zu unterstützen. Dein Name ist ${assistant.name}.
 
 ${LANGUAGE_GUIDELINES}
@@ -57,27 +41,20 @@ ${SUGGESTION_GUIDELINES}
 Die folgenden Anweisungen wurden von der Lehrkraft erstellt und haben bei Widersprüchen immer Vorrang vor den allgemeinen Richtlinien.
 
 ${assistant.description ? `Dein Ziel ist es hierbei zu assistieren:\n${assistant.description}` : ''}
-${assistant.instructions ? `Deine Aufgabe ist insbesondere:\n${assistant.instructions}` : ''}
-${ragContext}`;
+${assistant.instructions ? `Deine Aufgabe ist insbesondere:\n${assistant.instructions}` : ''}`;
 }
 
 function constructHelpModeSystemPrompt({
   isTeacher,
   federalStateSupportEmails,
   chatStorageDuration,
-  chunks,
-  errorUrls,
   activeToolDefinitions,
 }: {
   isTeacher: boolean;
   federalStateSupportEmails: string[] | null;
   chatStorageDuration: number;
-  chunks: RetrievedChunk[];
-  errorUrls: string[];
   activeToolDefinitions: ToolDefinition[];
 }) {
-  const ragContext = constructRagContext(chunks, errorUrls);
-
   return `Du bist der integrierte Hilfechat zu AIS.chat, dem datenschutzkonformen KI-Chatbot für den Schulunterricht.
 AIS.chat unterstützt Lehrkräfte bei der Unterrichtsgestaltung und Schülerinnen und Schüler beim Lernen.
 AIS.chat wird vom FWU, dem Medieninstitut der Länder, entwickelt und betrieben.
@@ -92,7 +69,7 @@ Der User hat ein limitiertes monetäres Budget pro Monat zur Verfügung, welches
 <background information> Der monetäre Betrag wird den Nutzern nicht kommuniziert. </>
 
 Die Tokenpreise der unterschiedlichen LLMs variieren. Der Verbrauch hängt vom Tokenverbrauch und dem verwendeten LLM ab. Ressourcensparende Modelle sind mit einem grünen Blatt gekennzeichnet.
-Dateien lassen sich über Drag and Drop oder den Klammer Icon Button hochladen und so im Chatkontext verarbeitet. Links können direkt in die Nachricht kopiert werden, AIS.chat liest dann die zugehörige Webseite mit aus.
+Dateien lassen sich über Drag and Drop oder den Klammer Icon Button hochladen und so im Chatkontext verarbeitet. Links können direkt in die Nachricht kopiert werden, AIS.chat liest dann die zugehörige Webseite mit aus. 
 
 Chats werden in AIS.chat für ${chatStorageDuration} Tage gespeichert. Vergangene Chats sind im Sideboard links gelistet, die Konversation kann jederzeit wieder aufgenommen werden.
 
@@ -105,9 +82,9 @@ ${
   isTeacher
     ? `
 Deine Funktionen in der Seitenleiste links:
-- Lernszenarien: Diese erlauben es der Lehrkraft, eine bestimmte pädagogische Situation oder Zielsetzung über einen Systemprompt vorab zu konfigurieren. Diese Chats lassen sich dann über einen Link teilen, wobei jeder Schüler komplett anonymisiert und datenschutzkonform, ohne sich einloggen zu müssen, mit dem LLM chatten kann. Jeder Chat besteht nur aus dem LLM und einem Gegenüber, d.h. einem Schüler.
-- Dialogpartner: Die User können hier Personen konfigurieren, welche dann von dem LLM in einem Chat simuliert werden. Die erstellten Personen lassen sich auch auf Schulebene teilen oder über einen Link anonymisiert mit den SchülerInnen teilen.
-- Assistenten: Durch Systemprompts vorkonfigurierte KI-Chats. Sie eignen sich besonders für sich wiederholende Aufgaben, bspw. administrative Tätigkeiten
+- Lernszenarien: Diese erlauben es der Lehrkraft, eine bestimmte pädagogische Situation oder Zielsetzung über einen Systemprompt vorab zu konfigurieren. Es lässt sich ein Arbeitsauftrag konfigurieren, den die Schüler dann während der Bearbeitung immer einsehen könnnen. Diese Chats lassen sich dann über einen Link mit Schülern teilen, wobei jeder Schüler komplett anonymisiert und datenschutzkonform, ohne sich einloggen zu müssen, mit dem LLM chatten kann. Jeder Chat besteht nur aus dem LLM und einem Gegenüber, d.h. einem Schüler.
+- Dialogpartner: Die User können hier Personen konfigurieren, welche dann von dem LLM in einem Chat simuliert werden. Dialogpartner können mit Schülern geteilt werden.
+- Assistenten: Durch Systemprompts vorkonfigurierte KI-Chats. Sie eignen sich besonders für sich wiederholende Aufgaben, bspw. administrative Tätigkeiten. Assistenten können nicht mit Schülern geteilt werden.
 
 Assistenten, Dialogpartner und Lernszenarien lassen sich außerdem schulintern, über Links oder mit allen AIS.chat-Usern teilen. Bei mutmaßlichen Verstößen gegen die Nutzungsbedingungen oder allgemein unangebrachten Inhalten können sie über den Button "Assistent melden" unterhalb der Informationen gemeldet werden.`
     : ''
@@ -115,7 +92,7 @@ Assistenten, Dialogpartner und Lernszenarien lassen sich außerdem schulintern, 
 
 Die Datenverarbeitung von AIS.chat erfolgt ausschließlich in der EU. Nutzerdaten werden nur pseudonymisiert verarbeitet.
 
-Die Bildgenerierung wird über die Sidebar erreicht.
+Die Bildgenerierung wird über die Sidebar erreicht. Die Bildgenerierung ist eine Funktion für Lehrkräfte und kann nicht den Schülern zur Verfügung gestellt werden. Imagen 4 kann keine Bilder von Kindern erstellen, alternativ kann hier gpt-image-1.5 genutzt werden.
 AIS.chat kann keine Dateien erstellen. User können Chatverläufe ausschließlich im docx-Format herunterladen.
 
 Befolge folgende Anweisungen:
@@ -128,8 +105,7 @@ ${federalStateSupportEmails !== null ? `- Kannst du nicht weiterhelfen, verweise
 - Du unterstützt die User auch bei der Erstellung von guten Prompts, beschränkst dich aber auf Hilfen zu AIS.chat und dem Einsatz von generativer KI.
 ${LANGUAGE_GUIDELINES}
 ${constructToolGuidelines(activeToolDefinitions)}
-${FORMAT_GUIDELINES}
-${ragContext}`;
+${FORMAT_GUIDELINES}`;
 }
 
 export function constructChatSystemPrompt({
@@ -138,9 +114,6 @@ export function constructChatSystemPrompt({
   assistant,
   isTeacher,
   federalState,
-  chunks,
-  errorUrls,
-  webSearchResults = [],
   activeToolDefinitions = [],
 }: {
   character?: CharacterSelectModel;
@@ -148,19 +121,15 @@ export function constructChatSystemPrompt({
   assistant?: AssistantSelectModel;
   isTeacher: boolean;
   federalState: ObscuredFederalState;
-  chunks: RetrievedChunk[];
-  errorUrls: string[];
-  webSearchResults?: WebSearchResult[];
   activeToolDefinitions?: ToolDefinition[];
 }) {
   if (character !== undefined) {
-    return constructCharacterSystemPrompt({ character, chunks, activeToolDefinitions });
+    return constructCharacterSystemPrompt({ character, activeToolDefinitions });
   }
 
   if (learningScenario !== undefined) {
     return constructLearningScenarioSystemPrompt({
       learningScenario,
-      chunks,
       activeToolDefinitions,
     });
   }
@@ -171,20 +140,12 @@ export function constructChatSystemPrompt({
         isTeacher,
         federalStateSupportEmails: federalState.supportContacts,
         chatStorageDuration: federalState.chatStorageTime,
-        chunks,
-        errorUrls,
         activeToolDefinitions,
       });
     }
 
-    return constructAssistantSystemPrompt(
-      assistant,
-      chunks,
-      errorUrls,
-      webSearchResults,
-      activeToolDefinitions,
-    );
+    return constructAssistantSystemPrompt(assistant, activeToolDefinitions);
   }
 
-  return constructAisChatSystemPrompt(chunks, errorUrls, webSearchResults, activeToolDefinitions);
+  return constructAisChatSystemPrompt(activeToolDefinitions);
 }

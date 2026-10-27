@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import { useId } from 'react';
 import Link from 'next/link';
 import { cn } from '@/utils/tailwind';
 import { truncateClassName } from '@/utils/tailwind/truncate';
@@ -10,7 +10,7 @@ import { ChatTextIcon, ImageSquareIcon } from '@phosphor-icons/react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@ui/components/tooltip';
 import { Button } from '@ui/components/button';
 import CountDownTimer from '@/app/(authed)/(chat-bot)/learning-scenarios/_components/count-down';
-import { calculateTimeLeft } from '@shared/sharing/calculate-time-left';
+import { calculateShareSessionState } from '@shared/sharing/calculate-share-session-state';
 
 type ShareInfo = {
   expiredAt: Date | null;
@@ -37,10 +37,14 @@ export default function EntityCard({
   chatHref,
   shareInfo,
 }: EntityCardProps) {
-  const sharedChatTimeLeft = shareInfo ? calculateTimeLeft(shareInfo) : -1;
-  const sharedChatActive = sharedChatTimeLeft > 0;
+  const { timeLeftInSeconds, isExtendable } = shareInfo
+    ? calculateShareSessionState(shareInfo)
+    : { timeLeftInSeconds: -1, isExtendable: false };
+
   const t = useTranslations('entity-overview');
   const tCommon = useTranslations('common');
+
+  const descriptionId = useId();
 
   return (
     <div
@@ -51,6 +55,7 @@ export default function EntityCard({
         href={href}
         prefetch={false}
         aria-label={name}
+        aria-describedby={description ? descriptionId : undefined}
         data-card-link
         className="flex items-center gap-4 grow min-w-0 p-4 outline-none"
         data-testid="entity-link"
@@ -77,14 +82,16 @@ export default function EntityCard({
             )}
           </div>
           {description && (
-            <span className={cn(truncateClassName, 'text-gray-600')}>{description}</span>
+            <span id={descriptionId} className={cn(truncateClassName, 'text-gray-600')}>
+              {description}
+            </span>
           )}
         </div>
       </Link>
 
-      {sharedChatActive && (
+      {isExtendable && (
         <CountDownTimer
-          leftTimeInSeconds={sharedChatTimeLeft}
+          leftTimeInSeconds={timeLeftInSeconds}
           totalTimeInSeconds={(shareInfo?.maxUsageTimeLimit ?? 0) * 60}
           className={cn('shrink-0 text-sm min-w-0 px-2 py-1', !chatHref && 'mr-4')}
           stopWatchClassName="w-4 h-4"
@@ -102,7 +109,7 @@ export default function EntityCard({
               className="mx-4"
             >
               <Link href={chatHref} prefetch={false} aria-label={tCommon('new-chat')}>
-                <ChatTextIcon aria-hidden="true" className="size-6   text-primary" />
+                <ChatTextIcon aria-hidden="true" className="size-6 text-primary" />
               </Link>
             </Button>
           </TooltipTrigger>

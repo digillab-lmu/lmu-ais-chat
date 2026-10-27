@@ -3,11 +3,13 @@
 import { SuspensionRequestEntityOverview } from '@shared/suspension/suspension-service';
 import { formatDateToGermanTimestamp } from '@shared/utils/date';
 import { ColumnDef } from '@tanstack/react-table';
-import { mapEntityTypeToLabel, mapStatusToLabel } from './utils';
+import { DataTableFeatures } from '@ui/components/data-table';
+import { mapStatusToLabel } from './utils';
 import { Button } from '@ui/components/button';
 import { ArrowUpDownIcon } from 'lucide-react';
+import { mapEntityTypeToLabel } from '@/utils/mapEntityTypeToLabel';
 
-export const columns: ColumnDef<SuspensionRequestEntityOverview>[] = [
+export const columns: ColumnDef<DataTableFeatures, SuspensionRequestEntityOverview>[] = [
   {
     accessorKey: 'entityName',
     header: ({ column }) => {

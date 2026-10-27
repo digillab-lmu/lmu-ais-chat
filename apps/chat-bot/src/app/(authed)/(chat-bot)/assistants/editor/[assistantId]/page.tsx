@@ -2,6 +2,8 @@ import { isWebSearchAvailableForFederalState } from '@/app/api/chat/websearch';
 import { requireAuth } from '@/auth/requireAuth';
 import { handleErrorInServerComponent } from '@/error/handle-error-in-server-component';
 import { getAssistantByUser } from '@shared/assistants/assistant-service';
+import { getSpeechModelVoices } from '@shared/llm-models/llm-model-service';
+import { getCommunityTemplateRequestWithEvents } from '@shared/community-templates/community-template-service';
 import { AssistantEdit } from './assistant-edit';
 import { DefaultPageLayout } from '@/components/layout/default-page-layout';
 import { type Metadata } from 'next';
@@ -25,9 +27,17 @@ export default async function Page(props: PageProps<'/assistants/editor/[assista
     user,
   }).catch(handleErrorInServerComponent);
 
+  const communityTemplateRequest = await getCommunityTemplateRequestWithEvents({
+    entityRef: { entityType: 'assistant', entityId: assistantId },
+    user,
+  }).catch(handleErrorInServerComponent);
+
   const initialLinks = assistant.attachedLinks
     .filter((l) => l !== '')
     .map((url) => ({ link: url }));
+
+  const isSpeechAvailable = federalState.featureToggles.isSpeechModelEnabled === true;
+  const speechVoices = isSpeechAvailable ? await getSpeechModelVoices() : [];
 
   return (
     <DefaultPageLayout layoutConfig={{ layout: 'form' }}>
@@ -36,7 +46,10 @@ export default async function Page(props: PageProps<'/assistants/editor/[assista
         relatedFiles={fileMappings}
         initialLinks={initialLinks}
         avatarPictureUrl={pictureUrl}
-        isWebSearchAvailable={isWebSearchAvailableForFederalState(federalState)}
+        initialCommunityTemplateRequest={communityTemplateRequest}
+        isWebSearchAvailable={isWebSearchAvailableForFederalState(federalState.featureToggles)}
+        isSpeechAvailable={isSpeechAvailable}
+        speechVoices={speechVoices}
       />
     </DefaultPageLayout>
   );

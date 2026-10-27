@@ -5,28 +5,34 @@ import StopWatchDoneIcon from '@/components/icons/stopwatch-done';
 import DownloadSharedConversationButton from '@/app/(unauth)/ua/download-shared-conversation-button';
 import { type ChatMessage as Message } from '@/types/chat';
 import { useTranslations } from 'next-intl';
+import { Button } from '@ui/components/button';
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@ui/components/alert-dialog';
+import { ArrowClockwiseIcon } from '@phosphor-icons/react';
 
 type ExpiredChatModalProps = {
   conversationMessages: Message[];
   title: string;
   inviteCode: string;
+  sharedSessionId: string;
+  handleRetry: () => void;
 };
 
 export default function ExpiredChatModal({
   conversationMessages,
   title,
   inviteCode,
+  sharedSessionId,
+  handleRetry,
 }: ExpiredChatModalProps) {
-  const t = useTranslations('learning-scenarios.shared');
+  const t = useTranslations('sharing');
+  const tCommon = useTranslations('common');
   const hasUserMessages = conversationMessages.some((message) => message.role === 'user');
 
   return (
@@ -42,17 +48,22 @@ export default function ExpiredChatModal({
         </AlertDialogHeader>
         <AlertDialogFooter className="items-center sm:justify-center">
           {/* If the shared chat has expired, the messages are gone, so there is no way atm to download the conversation. */}
-          {hasUserMessages && (
-            <AlertDialogAction asChild>
+          <div className="flex flex-col items-center gap-4">
+            {hasUserMessages && (
               <DownloadSharedConversationButton
                 primaryButton
                 characterName={title}
                 conversationMessages={conversationMessages}
                 disabled={false}
                 inviteCode={inviteCode}
+                sharedSessionId={sharedSessionId}
               />
-            </AlertDialogAction>
-          )}
+            )}
+            <Button onClick={handleRetry}>
+              <ArrowClockwiseIcon className="size-5" />
+              {tCommon('retry-button')}
+            </Button>
+          </div>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

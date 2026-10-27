@@ -1,4 +1,5 @@
-import { expect, Page, test } from '@playwright/test';
+import { expect, test } from '../../fixtures/test';
+import type { Page } from '@playwright/test';
 import { AUTH_FILES } from '../../utils/const';
 import { enterMessage, selectDifferentModel, sendMessage } from '../../utils/chat';
 import { configureCharacter, deleteCharacter } from '../../utils/character';
@@ -72,7 +73,7 @@ test.describe('character chat UX', () => {
     page,
   }) => {
     await page.goto(`/characters/d/${characterId}`);
-    await page.getByPlaceholder('Wie kann ich Dir helfen?').waitFor();
+    await page.getByTestId('chat-input').waitFor();
 
     // The initial message is visible at the start
     await expect(page.getByLabel('assistant message 1')).toBeVisible();
@@ -89,7 +90,7 @@ test.describe('character chat UX', () => {
 
     // Come back to the same conversation
     await page.goto(conversationUrl);
-    await page.getByPlaceholder('Wie kann ich Dir helfen?').waitFor();
+    await page.getByTestId('chat-input').waitFor();
 
     // The character's initial message must still appear at position 1
     await expect(page.getByLabel('assistant message 1')).toBeVisible();
@@ -121,7 +122,7 @@ test.describe('character chat UX', () => {
     await selectDifferentModel(page, LLM_MODELS.TEXT_MODEL_2);
 
     // Entered prompt should not be cleared
-    await expect(page.getByPlaceholder('Wie kann ich Dir helfen?')).toHaveValue(prompt);
+    await expect(page.getByTestId('chat-input')).toHaveValue(prompt);
 
     // All messages must still be visible after the model switch
     await expect(page.getByLabel('assistant message 1')).toBeVisible();

@@ -12,6 +12,8 @@ import {
   categoriesSchema,
   federalStatesSchema,
   languagesSchema,
+  webSearchScopeSchema,
+  type SpeechVoice,
 } from '@shared/db/schema';
 import { WebSource } from '@shared/db/types';
 import { useTranslations } from 'next-intl';
@@ -21,14 +23,24 @@ import {
   deleteCharacterAction,
   deleteFileMappingAndEntityAction,
   downloadFileFromCharacterAction,
+  getCharacterShareDataAction,
   linkFileToCharacterAction,
+  createCommunityTemplateRequestAction,
+  cancelCommunityTemplateRequestAction,
+  sendMessageToEditorAction,
+  getCharacterSharingStateAction,
   shareCharacterAction,
   unshareCharacterAction,
-  updateCharacterAccessLevelAction,
+  updateCharacterSchoolSharingAction,
+  extendCharacterShareExpirationAction,
+  updateCharacterShareTokenPointsLimitAction,
   updateCharacterAction,
   uploadAvatarPictureForCharacterAction,
 } from './actions';
 import { useFormAutosave } from '@/hooks/use-form-autosave';
+import { useEntitySharing } from '@/hooks/use-entity-sharing';
+import { CommunityTemplateRequestWithEvents } from '@shared/community-templates/community-template-service';
+import { isCommunitySharingActive } from '@shared/community-templates/community-sharing-state';
 import { usePendingChangesGuard } from '@/hooks/use-pending-changes-guard';
 import { BackButton } from '@/components/common/back-button';
 import { CustomChatActions } from '@/components/custom-chat/custom-chat-actions';
@@ -36,7 +48,7 @@ import { CustomChatActionUse } from '@/components/custom-chat/custom-chat-action
 import { CustomChatActionDelete } from '@/components/custom-chat/custom-chat-action-delete';
 import { CustomChatActionDuplicate } from '@/components/custom-chat/custom-chat-action-duplicate';
 import { CustomChatShareInfo } from '@/components/custom-chat/custom-chat-share-info';
-import { CustomChatShareWithLearners } from '@/components/custom-chat/custom-chat-share-with-learners/custom-chat-share-with-learners';
+import { CustomChatShareWithLearners } from '@/components/custom-chat/share-with-learners/custom-chat-share-with-learners';
 import { CustomChatHeading2 } from '@/components/custom-chat/custom-chat-heading2';
 import { CustomChatImageUpload } from '@/components/custom-chat/custom-chat-image-upload';
 import { FieldGroup } from '@ui/components/field';
@@ -48,28 +60,27 @@ import {
 } from '@/configuration-text-inputs/const';
 import { useToast } from '@/components/common/toast';
 import { useRouter } from 'next/navigation';
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo } from 'react';
 import { CustomChatHeaderContent } from '@/components/custom-chat/custom-chat-header-content';
 import { useLlmModels } from '@/components/providers/llm-model-provider';
-import { getDefaultModel } from '@shared/llm-models/llm-model-service';
 import { useForm, useWatch } from 'react-hook-form';
 import { CustomChatModelSelect } from '@/components/custom-chat/custom-chat-model-select';
-import { CustomChatFilesAndLinks } from '@/components/custom-chat/custom-chat-files-and-links/custom-chat-files-and-links';
+import { CustomChatFilesAndLinks } from '@/components/custom-chat/files-and-links/custom-chat-files-and-links';
+import { CustomChatWebSearchEditView } from '@/components/custom-chat/web-search/custom-chat-web-search-edit-view';
+import { CustomChatSpeechEditView } from '@/components/custom-chat/speech/custom-chat-speech-edit-view';
+import { resolveInitialVoice } from '@/components/custom-chat/speech/resolve-initial-voice';
 import CustomShareSection from '@/components/custom-chat/custom-chat-share-section';
 import { FormField } from '@ui/components/form/form-field';
 import { createNewCharacterAction } from '../../actions';
 import { CustomChatInstructionsExampleDialog } from '@/components/custom-chat/custom-chat-instructions-example-dialog';
 import { RichText, stripRichTextTags } from '@/components/common/rich-text';
 import { CustomChatSuspensionError } from '@/components/custom-chat/custom-chat-suspension-error';
-import {
-  getAccessLevelFromShareForm,
-  getShareFormValues,
-} from '@/components/custom-chat/access-level-sharing';
-import FilterSelectSection from '@/components/custom-chat/custom-chat-filter/custom-chat-filter-select-section';
+import FilterSelectSection from '@/components/custom-chat/filter/custom-chat-filter-select-section';
 import {
   extractFilterValues,
   toFilterGroup,
-} from '@/components/custom-chat/custom-chat-filter/custom-chat-filter-utils';
+} from '@/components/custom-chat/filter/custom-chat-filter-utils';
+import { CommunityTemplateRequest } from '@/components/custom-chat/sharing/community-template-request';
 
 type CharacterTranslator = ReturnType<typeof useTranslations<'characters'>>;
 
@@ -119,6 +130,12 @@ function createCharacterFormValuesSchema(t: CharacterTranslator) {
     isSchoolShared: z.boolean(),
     isCommunityShared: z.boolean(),
     hasLinkAccess: z.boolean(),
+    isWebSearchEnabled: z.boolean(),
+    webSearchScope: webSearchScopeSchema,
+    webSearchIncludedDomains: z.array(z.string()),
+    isSpeechEnabled: z.boolean(),
+    voice: z.string(),
+    speechOnly: z.boolean(),
   });
 }
 
@@ -129,15 +146,25 @@ export function CharacterEdit({
   relatedFiles,
   initialLinks,
   avatarPictureUrl,
+  initialCommunityTemplateRequest,
   usedBudget,
   maxBudget,
+  budgetUsedBySharedChat,
+  isWebSearchAvailable,
+  isSpeechAvailable,
+  speechVoices,
 }: {
   character: CharacterOptionalShareDataModel;
   relatedFiles: FileModel[];
   initialLinks: WebSource[];
   avatarPictureUrl?: string;
+  initialCommunityTemplateRequest: CommunityTemplateRequestWithEvents | null;
   usedBudget: number;
   maxBudget: number;
+  budgetUsedBySharedChat: number;
+  isWebSearchAvailable: boolean;
+  isSpeechAvailable: boolean;
+  speechVoices: SpeechVoice[];
 }) {
   useForceReloadOnBrowserBackButton();
   const router = useRouter();
@@ -145,8 +172,8 @@ export function CharacterEdit({
   const t = useTranslations('characters');
   const characterFormValuesSchema = useMemo(() => createCharacterFormValuesSchema(t), [t]);
 
-  const { models } = useLlmModels();
-  const maybeDefaultModelId = getDefaultModel(models)?.id;
+  const { models, defaultModel } = useLlmModels();
+  const maybeDefaultModelId = defaultModel?.id;
   const isModelAvailable = character.modelId && models.some((m) => m.id === character.modelId);
   const selectedModelId = isModelAvailable ? character.modelId : maybeDefaultModelId;
   const filterValues = extractFilterValues(character);
@@ -163,8 +190,18 @@ export function CharacterEdit({
     categories: filterValues.categories,
     federalStates: filterValues.federalStates,
     languages: filterValues.languages,
-    ...getShareFormValues(character.accessLevel),
+    isSchoolShared: character.isSchoolShared,
+    isCommunityShared: isCommunitySharingActive({
+      isCommunityShared: character.isCommunityShared,
+      requestState: initialCommunityTemplateRequest?.state,
+    }),
     hasLinkAccess: character.hasLinkAccess,
+    isWebSearchEnabled: character.isWebSearchEnabled,
+    webSearchScope: character.webSearchScope,
+    webSearchIncludedDomains: character.webSearchIncludedDomains,
+    isSpeechEnabled: character.isSpeechEnabled,
+    voice: resolveInitialVoice(character.voice, speechVoices),
+    speechOnly: character.speechOnly,
   };
 
   const {
@@ -190,7 +227,7 @@ export function CharacterEdit({
       },
       validate: trigger,
       saveValues: async (data) => {
-        // accessLevel is handled separately in handleSharingChange
+        // isSchoolShared/isCommunityShared are handled separately in handleSharingChange
         // attachedLinks are handled separately in handleLinksChange
         const updateResult = await updateCharacterAction({
           id: character.id,
@@ -199,20 +236,42 @@ export function CharacterEdit({
           instructions: data.instructions,
           initialMessage: data.initialMessage,
           modelId: data.modelId,
-          filterGroup: toFilterGroup({
-            schoolTypes: data.schoolTypes,
-            gradeRanges: data.gradeRanges,
-            subjects: data.subjects,
-            categories: data.categories,
-            federalStates: data.federalStates,
-            languages: data.languages,
-          }),
+          filterGroup: toFilterGroup(data),
           hasLinkAccess: data.hasLinkAccess,
+          isWebSearchEnabled: data.isWebSearchEnabled,
+          webSearchScope: data.webSearchScope,
+          webSearchIncludedDomains: data.webSearchIncludedDomains,
+          isSpeechEnabled: data.isSpeechEnabled,
+          voice: data.voice,
+          speechOnly: data.speechOnly,
         });
 
         return updateResult.success;
       },
     });
+
+  const {
+    communityTemplateRequest,
+    createCommunityTemplateRequest,
+    sendMessageToEditor,
+    handleSharingChange,
+  } = useEntitySharing({
+    setValue,
+    initialRequest: initialCommunityTemplateRequest,
+    actions: {
+      createCommunityTemplateRequest: () =>
+        createCommunityTemplateRequestAction({ characterId: character.id }),
+      cancelCommunityTemplateRequest: () =>
+        cancelCommunityTemplateRequestAction({ characterId: character.id }),
+      sendMessageToEditor: (message) =>
+        sendMessageToEditorAction({ characterId: character.id, message }),
+      getEntitySharingState: () => getCharacterSharingStateAction({ characterId: character.id }),
+      updateSchoolSharing: (isSchoolShared) =>
+        updateCharacterSchoolSharingAction({ characterId: character.id, isSchoolShared }),
+    },
+    onError: () => toast.error(t('toasts.edit-toast-error')),
+    onSuccess: flushAutoSave,
+  });
 
   const name = useWatch({ control, name: 'name' });
   const schoolTypes = useWatch({ control, name: 'schoolTypes' });
@@ -221,7 +280,6 @@ export function CharacterEdit({
   const categories = useWatch({ control, name: 'categories' });
   const federalStates = useWatch({ control, name: 'federalStates' });
   const languages = useWatch({ control, name: 'languages' });
-  const savedAccessLevelRef = useRef(character.accessLevel);
   const isSchoolShared = useWatch({ control, name: 'isSchoolShared' });
   const isCommunityShared = useWatch({ control, name: 'isCommunityShared' });
   const hasLinkAccess = useWatch({ control, name: 'hasLinkAccess' });
@@ -288,18 +346,18 @@ export function CharacterEdit({
   };
 
   const handleDeleteFile = async (fileId: string) => {
-    return await deleteFileMappingAndEntityAction({
+    return deleteFileMappingAndEntityAction({
       characterId: character.id,
       fileId,
     });
   };
 
   const handleDownloadFile = async (fileId: string) => {
-    return await downloadFileFromCharacterAction({ characterId: character.id, fileId });
+    return downloadFileFromCharacterAction({ characterId: character.id, fileId });
   };
 
   const handleLinksChange = async (links: string[]) => {
-    return await updateCharacterAction({ id: character.id, attachedLinks: links });
+    return updateCharacterAction({ id: character.id, attachedLinks: links });
   };
 
   async function handleUploadPicture(croppedImageBlob: Blob) {
@@ -314,36 +372,6 @@ export function CharacterEdit({
 
     return result;
   }
-
-  const handleSharingChange = async ({ name, checked }: { name: string; checked: boolean }) => {
-    if (name === 'isSchoolShared' || name === 'isCommunityShared') {
-      const nextShareValues = {
-        isSchoolShared: name === 'isSchoolShared' ? checked : getValues('isSchoolShared'),
-        isCommunityShared: name === 'isCommunityShared' ? checked : getValues('isCommunityShared'),
-      };
-
-      const newAccessLevel = getAccessLevelFromShareForm(nextShareValues);
-
-      if (newAccessLevel !== savedAccessLevelRef.current) {
-        const result = await updateCharacterAccessLevelAction({
-          characterId: character.id,
-          accessLevel: newAccessLevel,
-        });
-
-        if (!result.success) {
-          const savedShareValues = getShareFormValues(savedAccessLevelRef.current);
-          setValue('isSchoolShared', savedShareValues.isSchoolShared);
-          setValue('isCommunityShared', savedShareValues.isCommunityShared);
-          toast.error(t('toasts.edit-toast-error'));
-          return;
-        }
-
-        savedAccessLevelRef.current = newAccessLevel;
-      }
-    }
-
-    await flushAutoSave();
-  };
 
   const actionButtons = (
     <CustomChatActions>
@@ -391,21 +419,45 @@ export function CharacterEdit({
           maxUsageTimeLimit={character.maxUsageTimeLimit}
           tokenPointsLimit={character.tokenPointsLimit}
           usedBudget={usedBudget}
+          budgetUsedBySharedChat={budgetUsedBySharedChat}
           maxBudget={maxBudget}
-          onShare={async (data) => {
-            const result = await shareCharacterAction({
+          onShare={(data) =>
+            shareCharacterAction({
               id: character.id,
               tokenPointsPercentageLimit: data.tokenPointsPercentageLimit,
               usageTimeLimit: data.usageTimeLimit,
-            });
-            return result;
-          }}
-          onUnshare={async () => {
-            const result = await unshareCharacterAction({
+            })
+          }
+          onUnshare={() =>
+            unshareCharacterAction({
               characterId: character.id,
+            })
+          }
+          onAddTime={async (data) => {
+            const result = await extendCharacterShareExpirationAction({
+              characterId: character.id,
+              additionalTimeInMinutes: data.additionalTimeInMinutes,
             });
-            return result;
+            if (result.success) {
+              return { success: true, expiredAt: result.value.expiredAt };
+            }
+            return { success: false };
           }}
+          onAdjustTokenLimit={async (data) => {
+            const result = await updateCharacterShareTokenPointsLimitAction({
+              characterId: character.id,
+              tokenPointsPercentageLimit: data.tokenPointsPercentageLimit,
+            });
+            if (result.success) {
+              return { success: true, tokenPointsLimit: result.value.tokenPointsLimit };
+            }
+            return { success: false };
+          }}
+          onPollShareData={() =>
+            getCharacterShareDataAction({
+              characterId: character.id,
+            })
+          }
           shareUILink={`/characters/editor/${character.id}/share`}
           sharingDisabled={!name || name.trim().length === 0}
         />
@@ -503,6 +555,34 @@ export function CharacterEdit({
             onDownloadFile={handleDownloadFile}
           />
 
+          {isWebSearchAvailable && (
+            <CustomChatWebSearchEditView
+              control={control}
+              onCheckedChange={() => {
+                void flushAutoSave();
+              }}
+              onChange={() => {
+                void flushAutoSave();
+              }}
+            />
+          )}
+
+          {isSpeechAvailable && (
+            <CustomChatSpeechEditView
+              control={control}
+              voices={speechVoices}
+              onCheckedChange={() => {
+                void flushAutoSave();
+              }}
+              onVoiceChange={() => {
+                void flushAutoSave();
+              }}
+              onSpeechOnlyChange={() => {
+                void flushAutoSave();
+              }}
+            />
+          )}
+
           <CustomShareSection
             control={control}
             schoolSharingName="isSchoolShared"
@@ -512,6 +592,13 @@ export function CharacterEdit({
             onShareChange={handleSharingChange}
             suspended={character.suspended}
           />
+          {communityTemplateRequest && (
+            <CommunityTemplateRequest
+              requestWithEvents={communityTemplateRequest}
+              onResubmit={createCommunityTemplateRequest}
+              onSendMessage={sendMessageToEditor}
+            />
+          )}
           <FilterSelectSection
             values={{
               schoolTypes,
