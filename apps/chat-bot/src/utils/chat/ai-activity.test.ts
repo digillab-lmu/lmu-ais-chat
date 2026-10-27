@@ -41,20 +41,48 @@ function registerMathCalculateActivity(overrides: Partial<ToolActivity> = {}) {
 describe('createAiActivityCollector', () => {
   it('accumulates provider reasoning summaries without exposing raw analysis', () => {
     const collector = createAiActivityCollector();
+    const part = { itemId: 'item-1', summaryIndex: 0 };
 
-    expect(collector.addReasoningSummary('First part. ')).toBe(true);
-    expect(collector.addReasoningSummary('Second part.')).toBe(true);
+    expect(collector.addReasoningSummary('First part. ', part)).toBe(true);
+    expect(collector.addReasoningSummary('Second part.', part)).toBe(true);
     expect(collector.getSteps()).toEqual([]);
   });
 
   it('adds the full reasoning summary before the done step', () => {
     const collector = createAiActivityCollector();
 
-    collector.addReasoningSummary('Reasoning trace.');
+    collector.addReasoningSummary('Reasoning trace.', { itemId: 'item-1', summaryIndex: 0 });
 
     expect(collector.finish()).toBe(true);
     expect(collector.getSteps()).toEqual([
       { kind: 'analysis-summary', content: 'Reasoning trace.' },
+      { kind: 'done' },
+    ]);
+  });
+
+  it('concatenates without a separator when no part identity is given (e.g. Gemini, persisted summaries)', () => {
+    const collector = createAiActivityCollector();
+
+    collector.addReasoningSummary('First part.');
+    collector.addReasoningSummary(' Second part.');
+
+    collector.finish();
+    expect(collector.getSteps()).toEqual([
+      { kind: 'analysis-summary', content: 'First part. Second part.' },
+      { kind: 'done' },
+    ]);
+  });
+
+  it('inserts a separator between distinct reasoning summary parts', () => {
+    const collector = createAiActivityCollector();
+
+    collector.addReasoningSummary('First part.', { itemId: 'item-1', summaryIndex: 0 });
+    collector.addReasoningSummary(' continued.', { itemId: 'item-1', summaryIndex: 0 });
+    collector.addReasoningSummary('Second part.', { itemId: 'item-1', summaryIndex: 1 });
+
+    collector.finish();
+    expect(collector.getSteps()).toEqual([
+      { kind: 'analysis-summary', content: 'First part. continued.\n\nSecond part.' },
       { kind: 'done' },
     ]);
   });
@@ -127,7 +155,7 @@ describe('createAiActivityCollector', () => {
     expect(sharedStep?.kind === 'tool' ? sharedStep.detail : undefined).toBeUndefined();
   });
 
-  it('skips applyResult for ToolErrorResult-shaped results', () => {
+  it('marks the step failed without calling applyResult for ToolErrorResult-shaped results', () => {
     const applyResult = vi.fn((step, result: MathCalculateToolSuccessResponse) => {
       return { ...step, result: result.result ?? undefined };
     });
@@ -137,7 +165,9 @@ describe('createAiActivityCollector', () => {
     collector.addToolCalls([toolCall]);
     expect(collector.addToolResult('call-1', { error: 'Invalid tool arguments' })).toBe(true);
     expect(applyResult).not.toHaveBeenCalled();
-    expect(collector.getSteps()).toEqual([{ kind: 'tool', id: 'call-1', tool: 'math_calculate' }]);
+    expect(collector.getSteps()).toEqual([
+      { kind: 'tool', id: 'call-1', tool: 'math_calculate', failed: true },
+    ]);
   });
 
   it('still applies the result when `error` is present but falsy (e.g. a stale `error: null`)', () => {

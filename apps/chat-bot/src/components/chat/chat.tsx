@@ -4,6 +4,7 @@ import { refetchFileMapping } from '@/app/(authed)/(chat-bot)/actions';
 import { getErrorMessageByType } from '@/error/get-error-message-by-type';
 import { useAutoScroll } from '@/hooks/use-auto-scroll';
 import { useMainChat, type ChatMessage } from '@/hooks/use-chat-hooks';
+import { fetchSpeechStream } from '@/utils/audio/fetch-speech-stream';
 import { getConversationPath } from '@/utils/chat/path';
 import { getFileExtension, isImageFile } from '@/utils/files/generic';
 import { navigateWithoutRefresh } from '@/utils/navigation/router';
@@ -21,9 +22,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { useTranslations } from 'next-intl';
 import React, { ReactNode, SyntheticEvent, useEffect, useState } from 'react';
+import { LocalFileState } from '../file-upload/upload-file';
 import RobotIcon from '../icons/robot';
 import { useFederalState } from '../providers/federal-state-provider';
 import { useLlmModels } from '../providers/llm-model-provider';
+import { useUserSettings } from '../providers/user-settings-provider';
 import { AssistantIcon } from './assistant-icon';
 import { ChatInputBox } from './chat-input-box';
 import { ErrorChatPlaceholder } from './error-chat-placeholder';
@@ -32,7 +35,6 @@ import { InitialChatContentDisplay } from './initial-content-display';
 import MarkdownDisplay from './markdown-display';
 import { Messages, type PendingFileModel } from './messages';
 import PromptSuggestions from './prompt-suggestions';
-import { LocalFileState } from './send-message-form';
 
 type ChatProps = {
   id: string;
@@ -67,6 +69,13 @@ export default function Chat({
 
   const federalState = useFederalState();
   const { selectedModel, setDownloadConversationEnabled } = useLlmModels();
+  const { settings } = useUserSettings();
+  const entitySpeechEnabled =
+    assistant?.isSpeechEnabled ?? character?.isSpeechEnabled ?? learningScenario?.isSpeechEnabled;
+  const entitySpeechOnly =
+    assistant?.speechOnly ?? character?.speechOnly ?? learningScenario?.speechOnly;
+  const speechVoice =
+    assistant?.voice ?? character?.voice ?? learningScenario?.voice ?? settings.defaultSpeechVoice;
   const conversationPath = getConversationPath({
     customGptId: assistant?.id,
     characterId: character?.id,
@@ -265,17 +274,23 @@ export default function Chat({
     });
   }
 
-  async function generateSpeech(text: string, isInitialMessage: boolean): Promise<Blob> {
+  async function generateSpeech(
+    text: string,
+    isInitialMessage: boolean,
+    signal?: AbortSignal,
+  ): Promise<Blob> {
     const useInitialMessage = isInitialMessage && character !== undefined;
-    const voice = assistant?.voice ?? character?.voice ?? learningScenario?.voice;
 
     const response = await fetch(
       useInitialMessage ? '/api/v1/speech/initial-message' : '/api/v1/speech',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify(
-          useInitialMessage ? { characterId: character.id } : { conversationId: id, text, voice },
+          useInitialMessage
+            ? { characterId: character.id }
+            : { conversationId: id, text, voice: speechVoice },
         ),
       },
     );
@@ -285,6 +300,17 @@ export default function Chat({
     }
 
     return response.blob();
+  }
+
+  async function generateSpeechStream(
+    text: string,
+    { signal }: { signal: AbortSignal },
+  ): Promise<ReadableStream<Uint8Array>> {
+    return fetchSpeechStream(
+      '/api/v1/speech/stream',
+      { conversationId: id, text, voice: speechVoice },
+      signal,
+    );
   }
 
   let placeholderElement: ReactNode;
@@ -341,6 +367,7 @@ export default function Chat({
   });
 
   const isLoading = status === 'submitted';
+  const isGenerating = status === 'submitted' || status === 'streaming';
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
@@ -376,19 +403,13 @@ export default function Chat({
               activitySteps={activitySteps}
               showActivityDialog={character !== undefined}
               generateSpeechFn={generateSpeech}
+              generateSpeechStreamFn={generateSpeechStream}
+              speechVoice={speechVoice}
               isSpeechModelEnabled={
                 federalState?.featureToggles?.isSpeechModelEnabled === true &&
-                (assistant?.isSpeechEnabled ??
-                  character?.isSpeechEnabled ??
-                  learningScenario?.isSpeechEnabled ??
-                  false)
+                (entitySpeechEnabled ?? true)
               }
-              speechOnly={
-                assistant?.speechOnly ??
-                character?.speechOnly ??
-                learningScenario?.speechOnly ??
-                false
-              }
+              speechOnly={entitySpeechOnly ?? settings.defaultIsSpeechOnly ?? false}
             />
           )}
           {error && (
@@ -415,7 +436,7 @@ export default function Chat({
               handleDeattachFile={handleDeattachFile}
               handleInputChange={handleInputChange}
               input={input}
-              isLoading={isLoading}
+              isGenerating={isGenerating}
             />
           </div>
         </div>

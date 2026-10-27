@@ -16,6 +16,7 @@ import MessageImageAttachment, { type PendingFileModel } from './message-image-a
 import { PlotStreamingContext } from './plot/plot-block';
 import Citation from './sources/citation';
 import SpeechAudioButton from './speech-audio-button';
+import { GenerateSpeechStreamFn } from './speech/types';
 
 // Re-export for consumers
 export type { PendingFileModel };
@@ -36,6 +37,8 @@ export function ChatBox({
   status,
   showActivityDialog,
   generateSpeechFn,
+  generateSpeechStreamFn,
+  speechVoice,
   isSpeechModelEnabled,
   speechOnly,
 }: {
@@ -54,6 +57,8 @@ export function ChatBox({
   status: ChatStatus;
   showActivityDialog?: boolean;
   generateSpeechFn: GenerateSpeechFn;
+  generateSpeechStreamFn: GenerateSpeechStreamFn;
+  speechVoice?: string;
   isSpeechModelEnabled: boolean;
   speechOnly: boolean;
 }) {
@@ -139,7 +144,7 @@ export function ChatBox({
     ) : null;
 
   const AiActivity =
-    activitySteps.length > 0 && !showActivityDialog && !(isLoading && isLastNonUser) ? (
+    activitySteps.length > 0 && !showActivityDialog ? (
       <AiActivityPanel steps={activitySteps} panelId={`assistant-ai-activity-${message.id}`} />
     ) : null;
 
@@ -159,7 +164,7 @@ export function ChatBox({
   const isInitialMessage = message.id === 'initial-message';
 
   const messageSpeechFn = useCallback(
-    (text: string) => generateSpeechFn(text, isInitialMessage),
+    (text: string, signal?: AbortSignal) => generateSpeechFn(text, isInitialMessage, signal),
     [generateSpeechFn, isInitialMessage],
   );
   const actionsVisible = message.role === 'assistant' && (!isLastNonUser || status !== 'streaming');
@@ -175,6 +180,8 @@ export function ChatBox({
       regenerateMessage={regenerateMessage}
       canRegenerateMessage={canRegenerateMessage}
       generateSpeechFn={messageSpeechFn}
+      generateSpeechStreamFn={generateSpeechStreamFn}
+      speechVoice={speechVoice}
       isSpeechModelEnabled={isSpeechModelEnabled}
       showActivityDialog={showActivityDialog}
       activitySteps={activitySteps}
@@ -189,6 +196,7 @@ export function ChatBox({
   const maybeAudioButton =
     isAssistantSpeechOnly && (actionsVisible || isSpeechOnlyStreaming) ? (
       <SpeechAudioButton
+        key={speechVoice ?? ''}
         text={plainText}
         generateSpeechFn={messageSpeechFn}
         isStreaming={isSpeechOnlyStreaming}

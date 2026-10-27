@@ -28,8 +28,9 @@ import { ReactNode, RefObject, SyntheticEvent, useEffect, useRef, useState } fro
 import { ErrorChatPlaceholder } from '../chat/error-chat-placeholder';
 import { FloatingText } from '../chat/floating-text';
 import { Messages, PendingFileModel } from '../chat/messages';
-import { LocalFileState } from '../chat/send-message-form';
+import { GenerateSpeechStreamFn } from '../chat/speech/types';
 import StreamingFinishedMarker from '../chat/streaming-finished-marker';
+import { LocalFileState } from '../file-upload/upload-file';
 
 type ShareSessionInput = Parameters<typeof calculateShareSessionState>[0];
 type Translator = ReturnType<typeof useTranslations>;
@@ -93,6 +94,7 @@ export type SharedChatViewProps = {
   isSpeechModelEnabled: boolean;
   generateSpeechFn: GenerateSpeechFn;
   speechOnly: boolean;
+  generateSpeechStreamFn: GenerateSpeechStreamFn;
 };
 
 /**
@@ -119,6 +121,7 @@ export default function GenericSharedChat({
   isSpeechModelEnabled,
   generateSpeechFn,
   speechOnly,
+  generateSpeechStreamFn,
 }: SharedChatViewProps) {
   const tCommon = useTranslations('common');
   const tCustomChat = useTranslations('custom-chat.shared');
@@ -302,6 +305,7 @@ export default function GenericSharedChat({
   }
 
   const isLoading = status === 'submitted';
+  const isGenerating = status === 'submitted' || status === 'streaming';
   const hasExerciseDescription =
     enableFloatingText && exerciseDescription !== undefined && exerciseDescription.trim() !== '';
   const showInitialContent =
@@ -389,6 +393,7 @@ export default function GenericSharedChat({
                 activitySteps={chat.activitySteps}
                 showActivityDialog={showActivityDialog}
                 generateSpeechFn={generateSpeechFn}
+                generateSpeechStreamFn={generateSpeechStreamFn}
                 isSpeechModelEnabled={isSpeechModelEnabled}
                 speechOnly={speechOnly}
               />
@@ -410,7 +415,7 @@ export default function GenericSharedChat({
                   customHandleSubmit={customHandleSubmit}
                   handleStopGeneration={stop}
                   input={input}
-                  isLoading={isLoading}
+                  isGenerating={isGenerating}
                   handleInputChange={handleInputChange}
                   enableFileUpload
                   fileUploadFn={
