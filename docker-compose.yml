@@ -267,6 +267,7 @@ services:
       OTC_S3_HOSTNAME: ais-s3-proxy
       OTC_PUBLIC_S3_URL: ${OTC_PUBLIC_S3_URL}
       NODE_USE_SYSTEM_CA: '1'
+      IMAGE_ATTACHMENT_MODE: base64
     ports:
       - '127.0.0.1:16000:3000'
     networks:
