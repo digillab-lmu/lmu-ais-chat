@@ -268,6 +268,9 @@ services:
       OTC_PUBLIC_S3_URL: ${OTC_PUBLIC_S3_URL}
       NODE_USE_SYSTEM_CA: '1'
       IMAGE_ATTACHMENT_MODE: base64
+      # Route handler errors otherwise reach Sentry only; this also writes them
+      # to the container log, so `docker logs ais-chat-app` shows real causes.
+      LOG_TO_STDOUT: 'true'
     ports:
       - '127.0.0.1:16000:3000'
     networks:
