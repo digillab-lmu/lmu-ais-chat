@@ -2,7 +2,8 @@ name: ais-chat
 
 services:
   ais-keycloak-fix-perms:
-    image: alpine
+    # Alpine ohne Tag (= :latest), Image vom 2025-12-18 -- Digest festgeschrieben
+    image: alpine@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62
     restart: no
     entrypoint: /bin/sh -c "chown 1000 /keycloak"
     volumes:
@@ -44,7 +45,8 @@ services:
         condition: service_completed_successfully
 
   ais-postgres:
-    image: pgvector/pgvector:pg16
+    # PostgreSQL 16.14 + pgvector; Tag "pg16" ist beweglich -> Digest festgeschrieben
+    image: pgvector/pgvector:pg16@sha256:131dcf7ff6a900545df8e7e092c270aa8c6db2f2c818e408cb45ec21316b74e6
     container_name: ais-postgres
     restart: unless-stopped
     labels:
@@ -66,7 +68,8 @@ services:
       start_period: 30s
 
   ais-valkey:
-    image: ghcr.io/valkey-io/valkey:8
+    # Valkey 8.1.8; Tag "8" ist beweglich -> Digest festgeschrieben
+    image: ghcr.io/valkey-io/valkey:8@sha256:c6d4637d757379a2ff040148b95c85936d85a06c129eafa5fbe582f9e720e12f
     container_name: ais-valkey
     restart: unless-stopped
     labels:
@@ -82,7 +85,8 @@ services:
       retries: 5
 
   ais-rabbitmq:
-    image: rabbitmq:4-management
+    # RabbitMQ 4.3.2 (management); Tag "4-management" ist beweglich -> Digest festgeschrieben
+    image: rabbitmq:4-management@sha256:76412b1ed2865b88ed01b4a504f72e888842f2089a7527743d325ce7c9d3a43b
     container_name: ais-rabbitmq
     restart: unless-stopped
     environment:
@@ -334,7 +338,8 @@ services:
         condition: service_started
 
   ais-chat-init:
-    image: alpine:3.24.1
+    # Alpine 3.24.1; Punkt-Release wird upstream neu gebaut -> Digest festgeschrieben
+    image: alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
     container_name: ais-chat-init
     restart: no
     environment:
@@ -378,7 +383,8 @@ services:
         echo '=== Init abgeschlossen ==='
 
   ais-s3-proxy:
-    image: nginx:alpine
+    # nginx 1.29.4, Image vom 2025-12-18; Tag "alpine" ist beweglich -> Digest festgeschrieben
+    image: nginx:alpine@sha256:fd9f8ce722ab13edb2e47ebdd16b843939280457bf1567a6cd155203f9ce98d8
     container_name: ais-s3-proxy
     restart: unless-stopped
     volumes:
