@@ -2,8 +2,8 @@ name: ais-chat
 
 services:
   ais-keycloak-fix-perms:
-    # Alpine ohne Tag (= :latest), Image vom 2025-12-18 -- Digest festgeschrieben
-    image: alpine@sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62
+    # Alpine 3.24.4 (Image vom 2026-11-08), gleicher Digest wie ais-chat-init -- Digest festgeschrieben
+    image: alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
     restart: no
     entrypoint: /bin/sh -c "chown 1000 /keycloak"
     volumes:
@@ -338,8 +338,8 @@ services:
         condition: service_started
 
   ais-chat-init:
-    # Alpine 3.24.1; Punkt-Release wird upstream neu gebaut -> Digest festgeschrieben
-    image: alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    # Alpine 3.24.4 (Image vom 2026-11-08); Punkt-Release wird upstream neu gebaut -> Digest festgeschrieben
+    image: alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
     container_name: ais-chat-init
     restart: no
     environment:
@@ -383,8 +383,8 @@ services:
         echo '=== Init abgeschlossen ==='
 
   ais-s3-proxy:
-    # nginx 1.29.4, Image vom 2025-12-18; Tag "alpine" ist beweglich -> Digest festgeschrieben
-    image: nginx:alpine@sha256:fd9f8ce722ab13edb2e47ebdd16b843939280457bf1567a6cd155203f9ce98d8
+    # nginx 1.30.7 (Stable-Linie, Image vom 2026-11-20); Punkt-Release wird upstream neu gebaut -> Digest festgeschrieben
+    image: nginx:1.30.7-alpine@sha256:caf4e1e032a20f9c3c5e28fc7f25ffd768ad8677b4975c54193075997b3a97e3
     container_name: ais-s3-proxy
     restart: unless-stopped
     volumes:
