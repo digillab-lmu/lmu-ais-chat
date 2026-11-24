@@ -472,7 +472,7 @@ function mapMessageToAnthropicMessageParam(message: NonSystemMessage): MessagePa
 /**
  * Maps ai-core message role to Anthropic message role.
  */
-function mapRoleToAntropic(role: 'user' | 'assistant' | 'tool'): MessageParam['role'] {
+function mapRoleToAntropic(role: 'user' | 'assistant' | 'tool'): 'user' | 'assistant' {
   switch (role) {
     case 'tool':
     case 'user':
